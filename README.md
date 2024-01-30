@@ -26,7 +26,7 @@ go get github.com/shengyanli1982/vowlink
 
 ## Quick Start
 
-I want say that VowLink is very easy to use, and you can use it in a few minutes.
+I want say that `VowLink` is very easy to use, and you can use it in a few minutes.
 
 **Example**
 
@@ -69,7 +69,7 @@ In this case i don't want use the same old stuff to explain how to use VowLink, 
 
 There are so many cases in our work, and i will show you some of them. Codes are in directory `examples`. eg: case 1 is in `examples/case1`.
 
-#### Case 1
+#### # Case 1
 
 Like if and else in our code, we want to do something if the condition is true, and do something else if the condition is false.
 
@@ -119,7 +119,7 @@ Resolve: hello world Copilot !!
 Rejected: rejected.
 ```
 
-#### Case 2
+#### # Case 2
 
 I like JavaScript style code, so i want to use it in Golang. I want to use `then()` to do something after the promise is resolved, and use `catch()` to do something after the promise is rejected.
 
@@ -169,7 +169,7 @@ Resolve: hello world Copilot !!
 Rejected: rejected.
 ```
 
-#### Case 3
+#### # Case 3
 
 I want to use `finally()` to do something after the promise is resolved or rejected.
 
@@ -217,7 +217,7 @@ finally 1
 finally 2
 ```
 
-#### Case 4
+#### # Case 4
 
 Can you let a new promise return by `then()`? Yes, you can.
 
@@ -256,7 +256,7 @@ $ go run demo.go
 hello world Copilot(NewPromise) !!
 ```
 
-#### Case 5
+#### # Case 5
 
 I want to use `all()` to do something after all promises are resolved.
 
@@ -310,7 +310,7 @@ $ go run demo.go
 >> 2 Promise 3
 ```
 
-#### Case 6
+#### # Case 6
 
 I want to use `race()` to do something after the first promise is resolved.
 
@@ -360,7 +360,7 @@ $ go run demo.go
 >> Promise 1
 ```
 
-#### Case 7
+#### # Case 7
 
 I want to use `any()` to do something after the first promise is resolved. `any()` is the same as `race` in ES6. But `any()` get all promise errors and return AggregateError if all promises are rejected.
 
@@ -430,7 +430,7 @@ $ go run demo.go
 !! All promises were rejected: Promise 1 rejected, Promise 2 rejected, Promise 3 rejected
 ```
 
-#### Case 8
+#### # Case 8
 
 I want to use `allSettled()` to do something after all promises are resolved or rejected.
 
