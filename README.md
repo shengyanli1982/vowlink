@@ -16,7 +16,7 @@ So `VowLink` is born. It is a Golang project inspired by ES6 promises, offering 
 
 -   Simple and easy to use
 -   No third-party dependencies
--   Support action callback functions
+-   Support `then()`, `catch()`, `finally()`, `all()`, `race()`, `any()`, `allSettled()`
 
 ## Installation
 
