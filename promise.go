@@ -79,17 +79,28 @@ func (p *Promise) reject(reason error) {
 // NewPromise 创建一个新的 Promise。
 // NewPromise creates a new promise with the given executor function.
 func NewPromise(executor func(resolve func(interface{}), reject func(error))) *Promise {
+	// 如果 executor 不是函数，则返回 nil。
+	// If executor is not a function, return nil.
 	if executor == nil {
 		return nil
 	}
+
+	// 创建一个 Promise。
+	// Create a promise.
 	p := &Promise{state: Pending}
+
+	// 执行 executor。
+	// Execute the executor.
 	executor(p.resolve, p.reject)
+
 	return p
 }
 
 // Then 添加一个 fulfilled 和 rejected 处理函数到 Promise。
 // Then adds fulfillment and rejection handlers to the promise.
 func (p *Promise) Then(onFulfilled func(interface{}) interface{}, onRejected func(error) error) *Promise {
+	// 如果 onFulfilled 或 onRejected 不是函数，则将其替换为默认函数。
+	// If onFulfilled or onRejected is not a function, replace it with the default function.
 	if onFulfilled == nil {
 		onFulfilled = defaultOnFulfilledFunc
 	}
@@ -97,6 +108,8 @@ func (p *Promise) Then(onFulfilled func(interface{}) interface{}, onRejected fun
 		onRejected = defaultOnRejectedFunc
 	}
 
+	// 如果 Promise 已经 settled，则立即执行 onFulfilled 或 onRejected。
+	// If the promise has already settled, execute onFulfilled or onRejected immediately.
 	return NewPromise(func(resolve func(interface{}), reject func(error)) {
 		switch p.state {
 		case Fulfilled:
@@ -116,9 +129,14 @@ func (p *Promise) Catch(onRejected func(error) error) *Promise {
 // Finally 添加一个 settled (fulfilled 或 rejected) 处理函数到 Promise。
 // Finally adds a finally handler to the promise.
 func (p *Promise) Finally(onFinally func()) *Promise {
+	// 如果 onFinally 是 nil，则将其替换为默认函数。
+	// If onFinally is nil, replace it with the default function.
 	if onFinally == nil {
 		onFinally = defaultOnFinallyFunc
 	}
+
+	// 返回一个新的 Promise，该 Promise 在 p settled 时执行 onFinally。
+	// Return a new promise that executes onFinally when p is settled.
 	return p.Then(func(value interface{}) interface{} {
 		onFinally()
 		return value
