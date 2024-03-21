@@ -1,36 +1,36 @@
-English | [中文](./README_CN.md)
+[English](./README.md) | 中文
 
 <div>
 	<h1>VowLink</h1>
-	<p>VowLink is a Golang project inspired by ES6 promises, offering a powerful tool for your functions chain call.</p>
+	<p>VowLink 是一个受 ES6 Promise 启发的 Golang 项目，为您的函数链式调用提供了强大的工具。</p>
     <img src="assets/logo.png" alt="logo" width="500px">
 </div>
 
-## Introduction
+## 简介
 
-Introducing `VowLink` in a few words can be challenging. Even though I have finished the first version of `VowLink`, I still struggle to find the perfect way to describe it.
+用几句话介绍 `VowLink` 可能有些困难。即使我已经完成了 `VowLink` 的第一个版本，我仍然在努力寻找完美的方式来描述它。
 
-In my development experience, I have often encountered the problem of code being too nested and logic becoming too complex. I wanted to find a solution that would allow me to avoid getting stuck in the middle of the code and simplify the logic. That's when I discovered the promise concept in ES6, which was a step in the right direction but not perfect. This inspired me to create something better.
+在我的开发经验中，我经常遇到代码嵌套过深、逻辑过于复杂的问题。我希望找到一种解决方案，可以避免我陷入代码的中间部分，并简化逻辑。这时我发现了 ES6 中的 Promise 概念，这是一个正确的方向，但并不完美。这激发了我创造出更好的东西的灵感。
 
-And thus, `VowLink` was born. It is a Golang project that draws inspiration from ES6 promises and provides a powerful tool for chaining function calls.
+于是，`VowLink` 诞生了。它是一个受 ES6 Promise 启发的 Golang 项目，为函数调用提供了强大的链式调用工具。
 
-## Advantages
+## 优势
 
--   Simple and easy to use
--   No third-party dependencies
--   Supports various methods such as `then()`, `catch()`, `finally()`, `all()`, `race()`, `any()`, `allSettled()`
+-   简单易用
+-   无第三方依赖
+-   支持 `then()`、`catch()`、`finally()`、`all()`、`race()`、`any()`、`allSettled()` 等多种方法
 
-## Installation
+## 安装
 
 ```bash
 go get github.com/shengyanli1982/vowlink
 ```
 
-## Quick Start
+## 快速入门
 
-With `VowLink`, you can start using it in just a few minutes. It's incredibly easy to use and requires minimal setup.
+使用 `VowLink`，您只需几分钟即可开始使用。它非常易于使用，无需进行复杂的设置。
 
-**Example**
+**示例**
 
 ```go
 package main
@@ -64,26 +64,26 @@ func main() {
 }
 ```
 
-**Result**
+**执行结果**
 
 ```bash
 $ go run demo.go
 hello world Copilot !!
 ```
 
-It's so easy, right?
+这很简单，对吧？
 
-Instead of using the same old examples to explain how to use VowLink, let's dive into a real case to demonstrate its usage. By using practical examples, we can better understand how VowLink can help us achieve our goals.
+为了说明如何使用 VowLink，我们不再使用相同的旧例子，而是深入一个真实案例来展示它的用法。通过使用实际示例，我们可以更好地理解 VowLink 如何帮助我们实现目标。
 
-### Study Cases
+### 实例案例
 
-There are various cases in our work, and I will show you some examples. You can find the code for each case in the `examples` directory. For example, Case 1 is located in `examples/case1`.
+我们的工作中有各种各样的案例，我将展示一些例子。您可以在 `examples` 目录中找到每个案例的代码。例如，案例 1 位于 `examples/case1`。
 
-#### # Case 1
+#### # 案例 1
 
-Just like using `if` and `else` in our code, we often want to perform certain actions if a condition is true, and different actions if the condition is false.
+就像在我们的代码中使用 `if` 和 `else` 一样，我们经常希望在条件为真时执行某些操作，在条件为假时执行不同的操作。
 
-**Example**
+**示例**
 
 ```go
 package main
@@ -137,7 +137,7 @@ func main() {
 }
 ```
 
-**Result**
+**执行结果**
 
 ```bash
 $ go run demo.go
@@ -145,11 +145,11 @@ Resolve: hello world Copilot !!
 Rejected: rejected.
 ```
 
-#### # Case 2
+#### # 案例 2
 
-I prefer using JavaScript-style code in Golang. I want to use `then()` to perform actions after the promise is resolved and `catch()` to handle rejected promises.
+我更喜欢在 Golang 中使用类似 JavaScript 风格的代码。我想使用 `then()` 在 promise 解析后执行操作，并使用 `catch()` 处理被拒绝的 promise。
 
-**Example**
+**示例**
 
 ```go
 package main
@@ -203,7 +203,7 @@ func main() {
 }
 ```
 
-**Result**
+**执行结果**
 
 ```bash
 $ go run demo.go
@@ -211,11 +211,11 @@ Resolve: hello world Copilot !!
 Rejected: rejected.
 ```
 
-#### # Case 3
+#### # 案例 3
 
-I want to use `finally()` to do something after the promise is resolved or rejected.
+我想使用 `finally()` 在 promise 解析或被拒绝后执行一些操作。
 
-**Example**
+**示例**
 
 ```go
 package main
@@ -269,7 +269,7 @@ func main() {
 }
 ```
 
-**Result**
+**执行结果**
 
 ```bash
 $ go run demo.go
@@ -277,9 +277,9 @@ finally 1
 finally 2
 ```
 
-#### # Case 4
+#### # 案例 4
 
-Yes, you can return a new promise using the `then()` method.
+嗯，你可以使用 `then()` 方法返回一个新的 promise。
 
 **Example**
 
@@ -317,18 +317,18 @@ func main() {
 }
 ```
 
-**Result**
+**执行结果**
 
 ```bash
 $ go run demo.go
 hello world Copilot(NewPromise) !!
 ```
 
-#### # Case 5
+#### # 案例 5
 
-To perform an action after all promises are resolved, you can use the `all()` method.
+要在所有 promise 解析后执行操作，可以使用 `all()` 方法。
 
-**Example**
+**示例**
 
 ```go
 package main
@@ -384,7 +384,7 @@ func main() {
 }
 ```
 
-**Result**
+**执行结果**
 
 ```bash
 $ go run demo.go
@@ -393,9 +393,9 @@ $ go run demo.go
 >> 2 Promise 3
 ```
 
-#### # Case 6
+#### # 案例 6
 
-I want to use `race()` to perform an action once the first promise is resolved.
+当第一个 promise 解析后，我想使用 `race()` 执行一个操作。
 
 **Example**
 
@@ -443,18 +443,18 @@ func main() {
 }
 ```
 
-**Result**
+**执行结果**
 
 ```bash
 $ go run demo.go
 >> Promise 1
 ```
 
-#### # Case 7
+#### # 案例 7
 
-I want to use `any()` to perform an action once the first promise is resolved. `any()` is similar to `race` in ES6. However, `any()` also captures any errors from all promises and returns an `AggregateError` if all promises are rejected.
+我想使用 `any()` 在第一个 promise 解析后执行一个操作。`any()` 类似于 ES6 中的 `race`。然而，`any()` 还会捕获所有 promise 的错误，并在所有 promise 都被拒绝时返回一个 `AggregateError`。
 
-**Example**
+**示例**
 
 ```go
 package main
@@ -537,7 +537,7 @@ func main() {
 }
 ```
 
-**Result**
+**执行结果**
 
 ```bash
 $ go run demo.go
@@ -545,11 +545,11 @@ $ go run demo.go
 !! All promises were rejected: Promise 1 rejected, Promise 2 rejected, Promise 3 rejected
 ```
 
-#### # Case 8
+#### # 案例 8
 
-To perform an action after all promises are resolved or rejected, you can use the `allSettled()` method.
+要在所有 promise 被解析或拒绝后执行操作，可以使用 `allSettled()` 方法。
 
-**Example**
+**示例**
 
 ```go
 package main
@@ -602,7 +602,7 @@ func main() {
 }
 ```
 
-**Result**
+**执行结果**
 
 ```bash
 $ go run demo.go
