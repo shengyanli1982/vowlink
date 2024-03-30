@@ -1,9 +1,7 @@
 English | [中文](./README_CN.md)
 
-<div>
-	<h1>VowLink</h1>
-	<p>VowLink is a Golang project inspired by ES6 promises, offering a powerful tool for your functions chain call.</p>
-    <img src="assets/logo.png" alt="logo" width="500px">
+<div align="center">
+	<img src="assets/logo.png" alt="logo" width="500px">
 </div>
 
 ## Introduction
