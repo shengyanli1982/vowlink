@@ -1,18 +1,16 @@
 [English](./README.md) | 中文
 
-<div>
-	<h1>VowLink</h1>
-	<p>VowLink 是一个受 ES6 Promise 启发的 Golang 项目，为您的函数链式调用提供了强大的工具。</p>
-    <img src="assets/logo.png" alt="logo" width="500px">
+<div align="center">
+	<img src="assets/logo.png" alt="logo" width="500px">
 </div>
 
 ## 简介
 
-用几句话介绍 `VowLink` 可能有些困难。即使我已经完成了 `VowLink` 的第一个版本，我仍然在努力寻找完美的方式来描述它。
+我已经完成了 `VowLink` 的第一个版本，但是几句话语言介绍 `VowLink` 可能有些困难。然而，我相信 `VowLink` 的优点可以通过简单的方式向大家介绍。
 
-在我的开发经验中，我经常遇到代码嵌套过深、逻辑过于复杂的问题。我希望找到一种解决方案，可以避免我陷入代码的中间部分，并简化逻辑。这时我发现了 ES6 中的 Promise 概念，这是一个正确的方向，但并不完美。这激发了我创造出更好的东西的灵感。
+在我的开发经验中，我经常遇到代码嵌套过深、逻辑过于复杂的问题。我希望找到一种解决方案，可以避免我陷入代码的中间部分，并简化逻辑。这时我发现了 ES6 中的 Promise 概念，这是一个正确的方向，但并不完美。这激发了我想创造出更好的东西解决问题的动机。
 
-于是，`VowLink` 诞生了。它是一个受 ES6 Promise 启发的 Golang 项目，为函数调用提供了强大的链式调用工具。
+于是，`VowLink` 诞生了。它是一个受 ES6 Promise 启发的 Golang 项目，为函数调用提供了强力的链式调用工具。
 
 ## 优势
 
