@@ -23,6 +23,8 @@ var (
 // AggregateError represents an error that aggregates multiple errors.
 // AggregateError 代表一个聚合了多个错误的错误。
 type AggregateError struct {
+	// Errors 字段是一个 error 类型的切片，用于存储所有的错误
+	// Errors field is a slice of error type, used to store all errors
 	Errors []error
 }
 
@@ -62,8 +64,8 @@ const (
 	Rejected
 )
 
-// Promise 是一个结构体，它代表一个 Promise。Promise 是一种编程模式，用于处理异步操作。
-// Promise is a struct that represents a Promise. A Promise is a programming pattern for handling asynchronous operations.
+// Promise 是一个结构体，它代表一个 Promise。Promise 是一种编程模式，用于处理执行操作。
+// Promise is a struct that represents a Promise. A Promise is a programming pattern for handling execution operations.
 type Promise struct {
 	// state 是 Promise 的状态，它可以是 Pending、Fulfilled 或 Rejected。
 	// state is the state of the Promise, it can be Pending, Fulfilled, or Rejected.
@@ -78,8 +80,8 @@ type Promise struct {
 	reason error
 }
 
-// resolve 是一个方法，它将 Promise 的状态设置为 Fulfilled 并设置值。这个方法通常在异步操作成功完成时调用。
-// resolve is a method that sets the state of the Promise to Fulfilled and sets the value. This method is typically called when the asynchronous operation successfully completes.
+// resolve 是一个方法，它将 Promise 的状态设置为 Fulfilled 并设置值。这个方法通常在执行操作成功完成时调用。
+// resolve is a method that sets the state of the Promise to Fulfilled and sets the value. This method is typically called when the execution operation successfully completes.
 func (p *Promise) resolve(value interface{}) {
 	// 如果 Promise 的状态是 Pending，那么我们可以将其状态设置为 Fulfilled。
 	// If the state of the Promise is Pending, then we can set its state to Fulfilled.
@@ -88,14 +90,14 @@ func (p *Promise) resolve(value interface{}) {
 		// Set the state to Fulfilled.
 		p.state = Fulfilled
 
-		// 设置 Promise 的值，这个值是异步操作的结果。
-		// Set the value of the Promise, this value is the result of the asynchronous operation.
+		// 设置 Promise 的值，这个值是执行操作的结果。
+		// Set the value of the Promise, this value is the result of the execution operation.
 		p.value = value
 	}
 }
 
-// reject 是一个方法，它将 Promise 的状态设置为 Rejected 并设置原因。这个方法通常在异步操作失败时调用。
-// reject is a method that sets the state of the Promise to Rejected and sets the reason. This method is typically called when the asynchronous operation fails.
+// reject 是一个方法，它将 Promise 的状态设置为 Rejected 并设置原因。这个方法通常在执行操作失败时调用。
+// reject is a method that sets the state of the Promise to Rejected and sets the reason. This method is typically called when the execution operation fails.
 func (p *Promise) reject(reason error) {
 	// 如果 Promise 的状态是 Pending，那么我们可以将其状态设置为 Rejected。
 	// If the state of the Promise is Pending, then we can set its state to Rejected.
@@ -104,14 +106,14 @@ func (p *Promise) reject(reason error) {
 		// Set the state to Rejected.
 		p.state = Rejected
 
-		// 设置 Promise 被拒绝的原因，这个值是异步操作失败的原因。
-		// Set the reason the Promise was rejected, this value is the reason the asynchronous operation failed.
+		// 设置 Promise 被拒绝的原因，这个值是执行操作失败的原因。
+		// Set the reason the Promise was rejected, this value is the reason the execution operation failed.
 		p.reason = reason
 	}
 }
 
-// NewPromise 方法创建一个新的 Promise，并接受一个执行器函数作为参数。执行器函数接受两个参数：resolve 和 reject，分别用于在异步操作成功或失败时改变 Promise 的状态。
-// The NewPromise method creates a new Promise and accepts an executor function as a parameter. The executor function accepts two parameters: resolve and reject, which are used to change the state of the Promise when the asynchronous operation succeeds or fails.
+// NewPromise 方法创建一个新的 Promise，并接受一个执行器函数作为参数。执行器函数接受两个参数：resolve 和 reject，分别用于在执行操作成功或失败时改变 Promise 的状态。
+// The NewPromise method creates a new Promise and accepts an executor function as a parameter. The executor function accepts two parameters: resolve and reject, which are used to change the state of the Promise when the execution operation succeeds or fails.
 func NewPromise(executor func(resolve func(interface{}), reject func(error))) *Promise {
 	// 如果执行器函数是 nil，那么我们没有办法改变 Promise 的状态，所以返回 nil。
 	// If the executor function is nil, then we have no way to change the state of the Promise, so return nil.
@@ -123,8 +125,8 @@ func NewPromise(executor func(resolve func(interface{}), reject func(error))) *P
 	// Create a new Promise with the state set to Pending. The Pending state indicates that the result of the Promise is not yet determined.
 	p := &Promise{state: Pending}
 
-	// 执行执行器函数，这个函数通常会启动一个异步操作。
-	// Execute the executor function, this function usually starts an asynchronous operation.
+	// 执行执行器函数，这个函数通常会启动一个执行操作。
+	// Execute the executor function, this function usually starts an execution operation.
 	executor(p.resolve, p.reject)
 
 	// 返回新创建的 Promise。
@@ -140,32 +142,41 @@ func (p *Promise) Then(onFulfilled func(interface{}) interface{}, onRejected fun
 	if onFulfilled == nil {
 		onFulfilled = defaultOnFulfilledFunc
 	}
-	// 如果 onRejected 函数是 nil，那么我们使用一个默认的 onRejected 函数，这个函数直接返回它的参数。
-	// If the onRejected function is nil, then we use a default onRejected function, this function simply returns its parameter.
-	if onRejected == nil {
+
+	// 如果 onRejected 函数是 nil 或者 Promise 的拒绝原因是 nil，那么我们使用一个默认的 onRejected 函数，这个函数直接返回它的参数。
+	// If the onRejected function is nil or the reason for the Promise's rejection is nil, then we use a default onRejected function, this function simply returns its parameter.
+	if onRejected == nil || p.reason == nil {
 		onRejected = defaultOnRejectedFunc
 	}
 
 	// 返回一个新的 Promise，这个 Promise 的状态和值由 onFulfilled 或 onRejected 函数的返回值决定。
 	// Return a new Promise, the state and value of this Promise is determined by the return value of the onFulfilled or onRejected function.
 	return NewPromise(func(resolve func(interface{}), reject func(error)) {
-		// 根据 Promise 的状态
-		// According to the state of the Promise
+		// 根据 Promise 的状态进行不同的操作
+		// Perform different operations according to the state of the Promise
 		switch p.state {
 
-		// 如果 Promise 的状态是 Fulfilled
-		// If the state of the Promise is Fulfilled
+		// 如果 Promise 的状态是 Fulfilled，即 Promise 已经完成
+		// If the state of the Promise is Fulfilled, i.e., the Promise is fulfilled
 		case Fulfilled:
-			// 执行 onFulfilled 函数并解析 Promise。onFulfilled 函数的参数是原 Promise 的值。
-			// Execute the onFulfilled function and resolve the Promise. The parameter of the onFulfilled function is the value of the original Promise.
+			// 执行 onFulfilled 函数并解析 Promise。onFulfilled 函数的参数是原 Promise 的值，即 Promise 完成时的结果值。
+			// Execute the onFulfilled function and resolve the Promise. The parameter of the onFulfilled function is the value of the original Promise, i.e., the result value when the Promise is fulfilled.
 			resolve(onFulfilled(p.value))
 
-		// 如果 Promise 的状态是 Rejected
-		// If the state of the Promise is Rejected
+		// 如果 Promise 的状态是 Rejected，即 Promise 已经被拒绝
+		// If the state of the Promise is Rejected, i.e., the Promise is rejected
 		case Rejected:
-			// 执行 onRejected 函数并拒绝 Promise。onRejected 函数的参数是原 Promise 被拒绝的原因。
-			// Execute the onRejected function and reject the Promise. The parameter of the onRejected function is the reason the original Promise was rejected.
-			reject(onRejected(p.reason))
+			// 如果 Promise 被拒绝的原因不是 nil，即存在一个明确的拒绝原因
+			// If the reason the Promise was rejected is not nil, i.e., there is a definite reason for the rejection
+			if p.reason != nil {
+				// 执行 onRejected 函数并拒绝 Promise。onRejected 函数的参数是原 Promise 被拒绝的原因。
+				// Execute the onRejected function and reject the Promise. The parameter of the onRejected function is the reason the original Promise was rejected.
+				reject(onRejected(p.reason))
+			} else {
+				// 如果 Promise 被拒绝的原因是 nil，那么执行 onFulfilled 函数并解析 Promise。onFulfilled 函数的参数是原 Promise 的值。
+				// If the reason the Promise was rejected is nil, then execute the onFulfilled function and resolve the Promise. The parameter of the onFulfilled function is the value of the original Promise.
+				resolve(onFulfilled(p.value))
+			}
 		}
 	})
 }
