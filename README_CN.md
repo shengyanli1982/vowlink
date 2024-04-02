@@ -4,6 +4,10 @@
 	<img src="assets/logo.png" alt="logo" width="500px">
 </div>
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/shengyanli1982/vowlink)](https://goreportcard.com/report/github.com/shengyanli1982/vowlink)
+[![Build Status](https://github.com/shengyanli1982/vowlink/actions/workflows/test.yml/badge.svg)](https://github.com/shengyanli1982/vowlink/actions)
+[![Go Reference](https://pkg.go.dev/badge/github.com/shengyanli1982/vowlink.svg)](https://pkg.go.dev/github.com/shengyanli1982/vowlink)
+
 ## 简介
 
 我已经完成了 `VowLink` 的第一个版本，但是几句话语言介绍 `VowLink` 可能有些困难。然而，我相信 `VowLink` 的优点可以通过简单的方式向大家介绍。
