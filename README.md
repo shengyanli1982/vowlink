@@ -621,9 +621,9 @@ $ go run demo.go
 >> 2 Promise 3
 ```
 
-#### # Case
+#### # Case 9
 
-I want to use `then()` to perform an action after the promise is resolved, and `catch()` to handle rejected promises. If the promise is rejected, I want to return a new error and pass it to the next `catch()` function.
+After creating a Promise object, you can use the `reject` function to trigger an error. Subsequent `catch()` functions will handle the previous error and return a new one, creating a chain of error calls.
 
 ```go
 package main
@@ -715,7 +715,7 @@ value:  <nil>
 
 #### # Case 10
 
-I want to use `then()` to perform an action after the promise is resolved, and `catch()` to handle rejected promises. If the promise is rejected, I want one `catch()` recover the error and return a new value, and another `then()` to return a new value.
+After creating a Promise object, you can use the `reject` function to trigger an error. Each subsequent `catch()` function will handle the previous error and return a new one. If a `catch()` function successfully recovers from the error and returns a normal value (with `error` set to `nil`), all subsequent `catch()` functions will not be executed. Instead, the `then()` function will return this value.
 
 ```go
 package main
@@ -807,6 +807,8 @@ value:  Should be here. recover value: [error handled]
 
 #### # Case 11
 
+After creating a Promise object, the `resolve` function is used to handle the normal response, but the resolved value is an error. The `then()` function should be used after the Promise to handle the error object and store the result as a value. Subsequent `catch()` functions do not respond to this error.
+
 ```go
 package main
 
@@ -878,6 +880,8 @@ value:  Something went wrong
 ```
 
 #### # Case 12
+
+After creating a Promise object, you can use the `reject` function to raise an exception. However, the `reject` function does not return an error, but instead returns a value. Only the `then()` function handles the value passed by `reject`, while subsequent `catch()` functions are skipped without any processing.
 
 ```go
 package main
