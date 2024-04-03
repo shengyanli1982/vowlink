@@ -693,7 +693,7 @@ $ go run demo.go
 !! All promises were rejected: Promise 1 rejected, Promise 2 rejected, Promise 3 rejected
 ```
 
-#### # Case 8
+#### # 案例 8
 
 要在所有 promise 解析或拒绝后执行操作，可以使用 `allSettled()` 方法。
 
@@ -759,9 +759,9 @@ $ go run demo.go
 >> 2 Promise 3
 ```
 
-#### # Case 9
+#### # 案例 9
 
-After creating a Promise object, you can use the `reject` function to trigger an error. Subsequent `catch()` functions will handle the previous error and return a new one, creating a chain of error calls.
+在创建 Promise 对象后，您可以使用 `reject` 函数触发一个错误。后续的 `catch()` 函数将处理前一个错误并返回一个新的错误，从而创建一个错误调用链。
 
 **示例**
 
@@ -853,7 +853,7 @@ reason:  Should be here.
 value:  <nil>
 ```
 
-#### # Case 10
+#### # 案例 10
 
 创建一个 Promise 对象后，您可以使用 `reject` 函数触发一个错误。每个后续的 `catch()` 函数将处理前一个错误并返回一个新的错误。如果一个 `catch()` 函数成功从错误中恢复并返回一个正常值（`error` 设置为 `nil`），则所有后续的 `catch()` 函数将不会被执行。相反，`then()` 函数将返回这个值。
 
@@ -947,7 +947,7 @@ reason:  <nil>
 value:  Should be here. recover value: [error handled]
 ```
 
-#### # Case 11
+#### # 案例 11
 
 在创建 Promise 对象后，使用 `resolve` 函数来处理正常的响应，但解决的值是一个错误。应该在 Promise 后使用 `then()` 函数来处理错误对象，并将结果存储为值。后续的 `catch()` 函数不会对此错误做出响应。
 
@@ -1023,7 +1023,7 @@ reason:  <nil>
 value:  Something went wrong
 ```
 
-#### # Case 12
+#### # 案例 12
 
 在创建 Promise 对象后，你可以使用 `reject` 函数来抛出异常。然而，`reject` 函数并不返回错误，而是返回一个值。只有 `then()` 函数处理 `reject` 传递的值，而后续的 `catch()` 函数会被跳过，不进行任何处理。
 
