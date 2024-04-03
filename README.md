@@ -77,6 +77,17 @@ It's so easy, right?
 
 Instead of using the same old examples to explain how to use VowLink, let's dive into a real case to demonstrate its usage. By using practical examples, we can better understand how VowLink can help us achieve our goals.
 
+### Core Rules
+
+> [!IMPORTANT]
+>
+> The `Rules` section is the core of the `VowLink` project. It is important to understand the rules before using `VowLink`.
+
+1. All `Then`, `Catch`, and `Finally` methods of a Promise can return an error. If an error is returned (even if it is the original error), it will be handled by the next `Then` or `Catch` method until the returned error is nil.
+2. `vowlink` supports the `resolve` and `reject` methods, which can return data and error, allowing `NewPromise` to make a second choice.
+3. The `GetValue` and `GetReason` methods are specific to the Promise and are terminal methods, meaning they do not return a `Promise` object.
+4. Although `vowlink` is inspired by `JavaScript Promise`, it is not identical to `JavaScript Promise` as `Golang` has its own differences.
+
 ### Study Cases
 
 There are various cases in our work, and I will show you some examples. You can find the code for each case in the `examples` directory. For example, Case 1 is located in `examples/case1`.

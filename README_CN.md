@@ -77,6 +77,17 @@ hello world vowlink !!
 
 为了说明如何使用 VowLink，我们不再使用相同的旧例子，而是深入一个真实案例来展示它的用法。通过使用实际示例，我们可以更好地理解 VowLink 如何帮助我们实现目标。
 
+### 核心规则
+
+> [!IMPORTANT]
+>
+> 这套 `规则` 是 `VowLink` 项目的核心。在使用 `VowLink` 之前，了解这些规则非常重要。
+
+1. 所有 Promise 的 `Then`、`Catch` 和 `Finally` 方法都可以返回错误。如果返回了错误（即使是原始错误），它将被下一个 `Then` 或 `Catch` 方法处理，直到返回的错误为 nil。
+2. `vowlink` 支持 `resolve` 和 `reject` 方法，可以返回数据和错误，允许 `NewPromise` 进行第二次选择。
+3. `GetValue` 和 `GetReason` 方法是特定于 Promise 的终端方法，意味着它们不返回 `Promise` 对象。
+4. 虽然 `vowlink` 受到 `JavaScript Promise` 的启发，但与 `JavaScript Promise` 并不完全相同，因为 `Golang` 有自己的差异。
+
 ### 实例案例
 
 我们的工作中有各种各样的案例，我将展示一些例子。您可以在 `examples` 目录中找到每个案例的代码。例如，案例 1 位于 `examples/case1`。
