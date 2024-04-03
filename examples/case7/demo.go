@@ -10,34 +10,34 @@ import (
 func main() {
 	// 创建 3 个 promise
 	// Create 3 promises
-	p1 := vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第一个 promise 直接解析为 "Promise"
 		// The first promise is directly resolved to "Promise"
-		resolve("Promise")
-	}).Then(func(value interface{}) interface{} {
+		resolve("Promise", nil)
+	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 1"
 		// In the Then method, append " 1" to the resolved value
-		return value.(string) + " 1"
+		return value.(string) + " 1", nil
 	}, nil)
 
-	p2 := vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第二个 promise 直接解析为 "Promise"
 		// The second promise is directly resolved to "Promise"
-		resolve("Promise")
-	}).Then(func(value interface{}) interface{} {
+		resolve("Promise", nil)
+	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 2"
 		// In the Then method, append " 2" to the resolved value
-		return value.(string) + " 2"
+		return value.(string) + " 2", nil
 	}, nil)
 
-	p3 := vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第三个 promise 直接解析为 "Promise"
 		// The third promise is directly resolved to "Promise"
-		resolve("Promise")
-	}).Then(func(value interface{}) interface{} {
+		resolve("Promise", nil)
+	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 3"
 		// In the Then method, append " 3" to the resolved value
-		return value.(string) + " 3"
+		return value.(string) + " 3", nil
 	}, nil)
 
 	// Any() 将等待第一个 promise 被解析，并返回一个带有值的 promise
@@ -50,22 +50,22 @@ func main() {
 
 	// 创建 3 个 promise
 	// Create 3 promises
-	p1 = vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p1 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第一个 promise 被拒绝，原因是 "Promise 1 rejected"
 		// The first promise is rejected with the reason "Promise 1 rejected"
-		reject(errors.New("Promise 1 rejected"))
+		reject(nil, errors.New("Promise 1 rejected"))
 	})
 
-	p2 = vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p2 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第二个 promise 被拒绝，原因是 "Promise 2 rejected"
 		// The second promise is rejected with the reason "Promise 2 rejected"
-		reject(errors.New("Promise 2 rejected"))
+		reject(nil, errors.New("Promise 2 rejected"))
 	})
 
-	p3 = vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p3 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第三个 promise 被拒绝，原因是 "Promise 3 rejected"
 		// The third promise is rejected with the reason "Promise 3 rejected"
-		reject(errors.New("Promise 3 rejected"))
+		reject(nil, errors.New("Promise 3 rejected"))
 	})
 
 	// Any() 将等待所有的 promise 被拒绝，并返回一个带有原因 `AggregateError` 的 promise
