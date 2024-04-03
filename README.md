@@ -165,7 +165,7 @@ import (
 func main() {
 	// vowlink 像一个链条，你可以在链条上添加更多的 then() 来在 promise 解析后做更多的事情。
 	// vowlink is like a chain, you can add more then() to the chain to do more things after the promise is resolved.
-	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 这个 promise 直接解析为 "hello world"
 		// This promise is directly resolved to "hello world"
 		resolve("hello world", nil)
@@ -185,7 +185,7 @@ func main() {
 
 	// 这是一个被拒绝的 promise
 	// This is a rejected promise
-	result = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	result = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 这个 promise 被拒绝，原因是 "error"
 		// This promise is rejected with the reason "error"
 		reject(nil, fmt.Errorf("error"))
@@ -231,7 +231,7 @@ import (
 func main() {
 	// vowlink 像一个链条，你可以在链条上添加更多的 then() 来在 promise 解析后做更多的事情。
 	// vowlink is like a chain, you can add more then() to the chain to do more things after the promise is resolved.
-	_ = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	_ = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 这个 promise 直接解析为 "hello world"
 		// This promise is directly resolved to "hello world"
 		resolve("hello world", nil)
@@ -251,7 +251,7 @@ func main() {
 
 	// 这是一个被拒绝的 promise
 	// This is a rejected promise
-	_ = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	_ = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 这个 promise 被拒绝，原因是 "error"
 		// This promise is rejected with the reason "error"
 		reject(nil, fmt.Errorf("error"))
@@ -297,16 +297,16 @@ import (
 func main() {
 	// vowlink 像一个链条，你可以在链条上添加更多的 then() 来在 promise 解析后做更多的事情。
 	// vowlink is like a chain, you can add more then() to the chain to do more things after the promise is resolved.
-	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 这个 promise 直接解析为 "hello world"
 		// This promise is directly resolved to "hello world"
 		resolve("hello world", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，我们创建一个新的 promise，将解析的值加上 " vowlink(NewPromise)"
 		// In the Then method, we create a new promise, appending " vowlink(NewPromise)" to the resolved value
-		return vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
-			resolve(value.(string) + " vowlink(NewPromise)", nil)
-		})
+		return vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			resolve(value.(string)+" vowlink(NewPromise)", nil)
+		}), nil
 	}, nil).Then(func(value interface{}) (interface{}, error) {
 		// 在这个 Then 方法中，我们获取前一个 promise 的值，并加上 " !!"
 		// In this Then method, we get the value from the previous promise and append " !!"
@@ -344,34 +344,34 @@ import (
 func main() {
 	// 创建 3 个 promise
 	// Create 3 promises
-	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第一个 promise 直接解析为 "Promise"
 		// The first promise is directly resolved to "Promise"
-		resolve("Promise")
+		resolve("Promise", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 1"
 		// In the Then method, append " 1" to the resolved value
-		return value.(string) + " 1"
+		return value.(string) + " 1", nil
 	}, nil)
 
-	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第二个 promise 直接解析为 "Promise"
 		// The second promise is directly resolved to "Promise"
-		resolve("Promise")
+		resolve("Promise", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 2"
 		// In the Then method, append " 2" to the resolved value
-		return value.(string) + " 2"
+		return value.(string) + " 2", nil
 	}, nil)
 
-	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第三个 promise 直接解析为 "Promise"
 		// The third promise is directly resolved to "Promise"
-		resolve("Promise")
+		resolve("Promise", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 3"
 		// In the Then method, append " 3" to the resolved value
-		return value.(string) + " 3"
+		return value.(string) + " 3", nil
 	}, nil)
 
 	// All() 将等待所有的 promise 被解析，并返回一个带有所有值的 promise
@@ -402,37 +402,45 @@ I want to use `race()` to perform an action once the first promise is resolved.
 **Example**
 
 ```go
+package main
+
+import (
+	"fmt"
+
+	vl "github.com/shengyanli1982/vowlink"
+)
+
 func main() {
 	// 创建 3 个 promise
 	// Create 3 promises
-	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第一个 promise 直接解析为 "Promise"
 		// The first promise is directly resolved to "Promise"
-		resolve("Promise")
+		resolve("Promise", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 1"
 		// In the Then method, append " 1" to the resolved value
-		return value.(string) + " 1"
+		return value.(string) + " 1", nil
 	}, nil)
 
-	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第二个 promise 直接解析为 "Promise"
 		// The second promise is directly resolved to "Promise"
-		resolve("Promise")
+		resolve("Promise", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 2"
 		// In the Then method, append " 2" to the resolved value
-		return value.(string) + " 2"
+		return value.(string) + " 2", nil
 	}, nil)
 
-	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第三个 promise 直接解析为 "Promise"
 		// The third promise is directly resolved to "Promise"
-		resolve("Promise")
+		resolve("Promise", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 3"
 		// In the Then method, append " 3" to the resolved value
-		return value.(string) + " 3"
+		return value.(string) + " 3", nil
 	}, nil)
 
 	// Race() 将等待第一个 promise 被解析，并返回一个带有值的 promise
@@ -471,34 +479,34 @@ import (
 func main() {
 	// 创建 3 个 promise
 	// Create 3 promises
-	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第一个 promise 直接解析为 "Promise"
 		// The first promise is directly resolved to "Promise"
-		resolve("Promise")
+		resolve("Promise", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 1"
 		// In the Then method, append " 1" to the resolved value
-		return value.(string) + " 1"
+		return value.(string) + " 1", nil
 	}, nil)
 
-	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第二个 promise 直接解析为 "Promise"
 		// The second promise is directly resolved to "Promise"
-		resolve("Promise")
+		resolve("Promise", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 2"
 		// In the Then method, append " 2" to the resolved value
-		return value.(string) + " 2"
+		return value.(string) + " 2", nil
 	}, nil)
 
-	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第三个 promise 直接解析为 "Promise"
 		// The third promise is directly resolved to "Promise"
-		resolve("Promise")
+		resolve("Promise", nil)
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 3"
 		// In the Then method, append " 3" to the resolved value
-		return value.(string) + " 3"
+		return value.(string) + " 3", nil
 	}, nil)
 
 	// Any() 将等待第一个 promise 被解析，并返回一个带有值的 promise
@@ -511,22 +519,22 @@ func main() {
 
 	// 创建 3 个 promise
 	// Create 3 promises
-	p1 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p1 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第一个 promise 被拒绝，原因是 "Promise 1 rejected"
 		// The first promise is rejected with the reason "Promise 1 rejected"
-		reject(errors.New("Promise 1 rejected"))
+		reject(nil, errors.New("Promise 1 rejected"))
 	})
 
-	p2 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p2 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第二个 promise 被拒绝，原因是 "Promise 2 rejected"
 		// The second promise is rejected with the reason "Promise 2 rejected"
-		reject(errors.New("Promise 2 rejected"))
+		reject(nil, errors.New("Promise 2 rejected"))
 	})
 
-	p3 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p3 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第三个 promise 被拒绝，原因是 "Promise 3 rejected"
 		// The third promise is rejected with the reason "Promise 3 rejected"
-		reject(errors.New("Promise 3 rejected"))
+		reject(nil, errors.New("Promise 3 rejected"))
 	})
 
 	// Any() 将等待所有的 promise 被拒绝，并返回一个带有原因 `AggregateError` 的 promise
@@ -566,22 +574,22 @@ import (
 func main() {
 	// 创建 3 个 promise
 	// Create 3 promises
-	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第一个 promise 直接解析为 "Promise 1"
 		// The first promise is directly resolved to "Promise 1"
-		resolve("Promise 1")
+		resolve("Promise 1", nil)
 	})
 
-	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第二个 promise 被拒绝，原因是 "Promise 2 rejected"
 		// The second promise is rejected with the reason "Promise 2 rejected"
-		reject(errors.New("Promise 2 rejected"))
+		reject(nil, errors.New("Promise 2 rejected"))
 	})
 
-	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error))  {
+	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第三个 promise 直接解析为 "Promise 3"
 		// The third promise is directly resolved to "Promise 3"
-		resolve("Promise 3")
+		resolve("Promise 3", nil)
 	})
 
 	// AllSettled() 将等待所有的 promise 被解析或拒绝，并返回一个带有值的 promise
@@ -611,4 +619,330 @@ $ go run demo.go
 >> 0 Promise 1
 !! 1 Promise 2 rejected
 >> 2 Promise 3
+```
+
+#### # Case
+
+I want to use `then()` to perform an action after the promise is resolved, and `catch()` to handle rejected promises. If the promise is rejected, I want to return a new error and pass it to the next `catch()` function.
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+
+	vl "github.com/shengyanli1982/vowlink"
+)
+
+func main() {
+
+	// 创建一个新的 Promise
+	// Create a new Promise
+	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+		// 这个 Promise 会立即被拒绝，原因是 "rejected.100"
+		// This Promise will be immediately rejected with the reason "rejected.100"
+		reject(nil, fmt.Errorf("rejected.100"))
+
+	}).Catch(func(err error) (interface{}, error) {
+		// 当 Promise 被拒绝时，会执行这个 Catch 函数
+		// This Catch function will be executed when the Promise is rejected
+		fmt.Println("> catch 1")
+
+		// 返回一个新的错误，将会被下一个 Catch 函数接收
+		// Return a new error, which will be received by the next Catch function
+		return nil, err
+
+	}).Catch(func(err error) (interface{}, error) {
+		// 当上一个 Catch 函数返回错误时，会执行这个 Catch 函数
+		// This Catch function will be executed when the previous Catch function returns an error
+		fmt.Println("> catch 2")
+
+		// 返回一个新的错误，将会被下一个 Catch 函数接收
+		// Return a new error, which will be received by the next Catch function
+		return nil, errors.New("rejected.200")
+
+	}).Catch(func(err error) (interface{}, error) {
+		// 当上一个 Catch 函数返回错误时，会执行这个 Catch 函数
+		// This Catch function will be executed when the previous Catch function returns an error
+		fmt.Println("> catch 3")
+
+		// 返回一个新的错误，将会被下一个 Catch 函数接收
+		// Return a new error, which will be received by the next Catch function
+		return nil, errors.New("rejected.300")
+
+	}).Then(func(value interface{}) (interface{}, error) {
+		// 当 Promise 被解决时，会执行这个 Then 函数
+		// This Then function will be executed when the Promise is resolved
+		fmt.Println("> then 1")
+
+		// 返回一个新的值，将会被下一个 Then 函数接收
+		// Return a new value, which will be received by the next Then function
+		return fmt.Sprintf("Never be here!! recover value: %v", value), nil
+
+	}, func(err error) (interface{}, error) {
+		// 当 Promise 被拒绝时，会执行这个 Catch 函数
+		// This Catch function will be executed when the Promise is rejected
+		fmt.Println("> catch 4")
+
+		// 返回一个新的错误，将会被下一个 Catch 函数接收
+		// Return a new error, which will be received by the next Catch function
+		return nil, errors.New("Should be here.")
+	})
+
+	// 打印 Promise 被拒绝的原因
+	// Print the reason the Promise was rejected
+	fmt.Println("reason: ", result.GetReason())
+
+	// 打印 Promise 的值，但是在这个例子中，Promise 会被拒绝，所以值会是 nil
+	// Print the value of the Promise, but in this case, the Promise will be rejected, so the value will be nil
+	fmt.Println("value: ", result.GetValue())
+
+}
+```
+
+**Result**
+
+```bash
+$ go run demo.go
+> catch 1
+> catch 2
+> catch 3
+> catch 4
+reason:  Should be here.
+value:  <nil>
+```
+
+#### # Case 10
+
+I want to use `then()` to perform an action after the promise is resolved, and `catch()` to handle rejected promises. If the promise is rejected, I want one `catch()` recover the error and return a new value, and another `then()` to return a new value.
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+
+	vl "github.com/shengyanli1982/vowlink"
+)
+
+func main() {
+
+	// 创建一个新的 Promise
+	// Create a new Promise
+	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+		// 这个 Promise 会立即被拒绝，原因是 "rejected.100"
+		// This Promise will be immediately rejected with the reason "rejected.100"
+		reject(nil, fmt.Errorf("rejected.100"))
+
+	}).Catch(func(err error) (interface{}, error) {
+		// 当 Promise 被拒绝时，会执行这个 Catch 函数
+		// This Catch function will be executed when the Promise is rejected
+		fmt.Println("> catch 1")
+
+		// 返回一个新的错误，将会被下一个 Catch 函数接收
+		// Return a new error, which will be received by the next Catch function
+		return nil, err
+
+	}).Catch(func(err error) (interface{}, error) {
+		// 当上一个 Catch 函数返回错误时，会执行这个 Catch 函数
+		// This Catch function will be executed when the previous Catch function returns an error
+		fmt.Println("> catch 2")
+
+		// 返回一个新的值，将会被下一个 Then 函数接收
+		// Return a new value, which will be received by the next Then function
+		return "[error handled]", nil
+
+	}).Catch(func(err error) (interface{}, error) {
+		// 当上一个 Catch 函数返回错误时，会执行这个 Catch 函数
+		// This Catch function will be executed when the previous Catch function returns an error
+		fmt.Println("> catch 3")
+
+		// 返回一个新的错误，将会被下一个 Catch 函数接收
+		// Return a new error, which will be received by the next Catch function
+		return nil, errors.New("rejected.200")
+
+	}).Then(func(value interface{}) (interface{}, error) {
+		// 当 Promise 被解决时，会执行这个 Then 函数
+		// This Then function will be executed when the Promise is resolved
+		fmt.Println("> then 1")
+
+		// 返回一个新的值，将会被下一个 Then 函数接收
+		// Return a new value, which will be received by the next Then function
+		return fmt.Sprintf("Should be here. recover value: %v", value), nil
+
+	}, func(err error) (interface{}, error) {
+		// 当 Promise 被拒绝时，会执行这个 Catch 函数
+		// This Catch function will be executed when the Promise is rejected
+		fmt.Println("> catch 4")
+
+		// 返回一个新的错误，将会被下一个 Catch 函数接收
+		// Return a new error, which will be received by the next Catch function
+		return nil, errors.New("Never be here!!")
+
+	})
+
+	// 输出 Promise 的拒绝原因，这里一定是 "nil"
+	// Print the rejection reason of the Promise, it must be "nil" here
+	fmt.Println("reason: ", result.GetReason())
+
+	// 输出 Promise 的解决值，这里一定是 "Should be here."
+	// Print the resolution value of the Promise, it must be "Should be here." here
+	fmt.Println("value: ", result.GetValue())
+
+}
+```
+
+**Result**
+
+```bash
+$ go run demo.go
+> catch 1
+> catch 2
+> then 1
+reason:  <nil>
+value:  Should be here. recover value: [error handled]
+```
+
+#### # Case 11
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+
+	vl "github.com/shengyanli1982/vowlink"
+)
+
+// 定义 main 函数
+// Define the main function
+func main() {
+
+	// 创建一个新的 Promise
+	// Create a new Promise
+	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+		// 这个 Promise 会立即被解决，值是一个错误 "Something went wrong"
+		// This Promise will be immediately resolved with a value of an error "Something went wrong"
+		resolve(errors.New("Something went wrong"), nil)
+
+	}).Then(func(data interface{}) (interface{}, error) {
+		// 当 Promise 被解决时，会执行这个 Then 函数
+		// This Then function will be executed when the Promise is resolved
+		fmt.Println("> then 1")
+
+		// 返回错误的字符串表示形式
+		// Return the string representation of the error
+		return data.(error).Error(), nil
+
+	}, func(error) (interface{}, error) {
+		// 当 Promise 被拒绝时，会执行这个 Catch 函数
+		// This Catch function will be executed when the Promise is rejected
+		fmt.Println("> catch 1")
+
+		// 返回一个新的错误 "Handled error"
+		// Return a new error "Handled error"
+		return nil, errors.New("Handled error")
+
+	}).Catch(func(reason error) (interface{}, error) {
+		// 当 Promise 被拒绝时，会执行这个 Catch 函数
+		// This Catch function will be executed when the Promise is rejected
+		fmt.Println("> catch 2")
+
+		// 返回一个字符串，表示恢复的值
+		// Return a string representing the recovered value
+		return fmt.Sprintf("Recovered value: %v", reason.Error()), nil
+
+	})
+
+	// 输出 Promise 的拒绝原因
+	// Print the rejection reason of the Promise
+	fmt.Println("reason: ", result.GetReason())
+
+	// 输出 Promise 的解决值
+	// Print the resolution value of the Promise
+	fmt.Println("value: ", result.GetValue())
+
+}
+```
+
+**Result**
+
+```bash
+$ go run demo.go
+> then 1
+reason:  <nil>
+value:  Something went wrong
+```
+
+#### # Case 12
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+
+	vl "github.com/shengyanli1982/vowlink"
+)
+
+func main() {
+
+	// 创建一个新的 Promise
+	// Create a new Promise
+	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+		// 这个 Promise 会立即被拒绝，原因是 "Something went wrong"
+		// This Promise will be immediately rejected with the reason "Something went wrong"
+		reject("Something went wrong", nil)
+
+	}).Then(func(data interface{}) (interface{}, error) {
+		// 当 Promise 被解决时，会执行这个 Then 函数
+		// This Then function will be executed when the Promise is resolved
+		fmt.Println("> then 1")
+
+		// 返回解决的值，将会被下一个 Then 函数接收
+		// Return the resolved value, which will be received by the next Then function
+		return data, nil
+
+	}, func(error) (interface{}, error) {
+		// 当 Promise 被拒绝时，会执行这个 Catch 函数
+		// This Catch function will be executed when the Promise is rejected
+		fmt.Println("> catch 1")
+
+		// 返回一个新的错误 "Handled error"
+		// Return a new error "Handled error"
+		return nil, errors.New("Handled error")
+
+	}).Catch(func(reason error) (interface{}, error) {
+		// 当 Promise 被拒绝时，会执行这个 Catch 函数
+		// This Catch function will be executed when the Promise is rejected
+		fmt.Println("> catch 2")
+
+		// 返回一个字符串，表示恢复的值
+		// Return a string representing the recovered value
+		return fmt.Sprintf("Recovered value: %v", reason.Error()), nil
+
+	})
+
+	// 输出 Promise 的拒绝原因
+	// Print the rejection reason of the Promise
+	fmt.Println("reason: ", result.GetReason())
+
+	// 输出 Promise 的解决值
+	// Print the resolution value of the Promise
+	fmt.Println("value: ", result.GetValue())
+
+}
+```
+
+**Result**
+
+```bash
+$ go run demo.go
+> then 1
+reason:  <nil>
+value:  Something went wrong
 ```
