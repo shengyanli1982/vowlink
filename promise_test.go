@@ -174,8 +174,9 @@ func TestPromise_Finally(t *testing.T) {
 		})
 
 		var finallyCalled bool
-		result := p.Finally(func() {
+		result := p.Finally(func() error {
 			finallyCalled = true
+			return nil
 		})
 
 		assert.Equal(t, Fulfilled, result.state, "Expected state to be Fulfilled")
@@ -189,8 +190,9 @@ func TestPromise_Finally(t *testing.T) {
 		})
 
 		var finallyCalled bool
-		result := p.Finally(func() {
+		result := p.Finally(func() error {
 			finallyCalled = true
+			return nil
 		})
 
 		assert.Equal(t, Rejected, result.state, "Expected state to be Rejected")
@@ -501,8 +503,9 @@ func TestPromise_MultiCatch(t *testing.T) {
 			return nil, errors.New("Handled 1 error: " + reason.Error())
 		}).Catch(func(reason error) (interface{}, error) {
 			return nil, errors.New("Handled 2 error: " + reason.Error())
-		}).Finally(func() {
+		}).Finally(func() error {
 			fmt.Println("Finally called")
+			return nil
 		}).Catch(func(reason error) (interface{}, error) {
 			return nil, errors.New("Handled 3 error: " + reason.Error())
 		})
@@ -518,8 +521,9 @@ func TestPromise_MultiCatch(t *testing.T) {
 			return nil, errors.New("Handled 1 error: " + reason.Error())
 		}).Catch(func(reason error) (interface{}, error) {
 			return "Recovered value", nil
-		}).Finally(func() {
+		}).Finally(func() error {
 			fmt.Println("Finally called")
+			return nil
 		}).Then(func(data interface{}) (interface{}, error) {
 			return data, nil
 		}, nil)
@@ -536,8 +540,9 @@ func TestPromise_ResolveWithError(t *testing.T) {
 		return nil, errors.New("Handled error: " + reason.Error())
 	}).Catch(func(reason error) (interface{}, error) {
 		return "Recovered value", nil
-	}).Finally(func() {
+	}).Finally(func() error {
 		fmt.Println("Finally called")
+		return nil
 	}).Then(func(data interface{}) (interface{}, error) {
 		return data, nil
 	}, nil)
@@ -574,4 +579,37 @@ func TestPromise_RejectWithNil(t *testing.T) {
 
 	assert.Equal(t, "Something went wrong", p.GetValue().(string), "Expected reason to be 'Something went wrong'")
 	assert.Nil(t, p.GetReason(), "Expected value to be nil")
+}
+
+func TestPromise_FinallyWithError(t *testing.T) {
+	t.Run("Finally with error and resolved", func(t *testing.T) {
+		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			resolve("Hello, World!", nil)
+		}).Finally(func() error {
+			return errors.New("Finally error")
+		}).Then(func(data interface{}) (interface{}, error) {
+			return data.(string) + " vowlink", nil
+		}, func(reason error) (interface{}, error) {
+			return nil, errors.New("Handled error: " + reason.Error())
+		})
+
+		assert.Equal(t, "Handled error: Finally error", p.GetReason().Error(), "Expected reason to be 'Handled error: Finally error'")
+		assert.Nil(t, p.GetValue(), "Expected value to be nil")
+
+	})
+
+	t.Run("Finally with error and rejected", func(t *testing.T) {
+		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			reject(nil, errors.New("Something went wrong"))
+		}).Finally(func() error {
+			return errors.New("Finally error")
+		}).Then(func(data interface{}) (interface{}, error) {
+			return data.(string) + " vowlink", nil
+		}, func(reason error) (interface{}, error) {
+			return nil, errors.New("Handled error: " + reason.Error())
+		})
+
+		assert.Equal(t, "Handled error: Finally error", p.GetReason().Error(), "Expected reason to be 'Handled error: Finally error'")
+		assert.Nil(t, p.GetValue(), "Expected value to be nil")
+	})
 }
