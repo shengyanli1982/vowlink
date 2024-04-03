@@ -17,7 +17,7 @@ var (
 
 	// defaultOnFinallyFunc is the default function to be executed when a promise is settled (fulfilled or rejected).
 	// defaultOnFinallyFunc 是 Promise 被 settled (fulfilled 或 rejected) 时执行的默认函数。
-	defaultOnFinallyFunc = func() {}
+	defaultOnFinallyFunc = func() error { return nil }
 )
 
 // AggregateError represents an error that aggregates multiple errors.
@@ -187,7 +187,7 @@ func (p *Promise) Catch(onRejected func(error) (interface{}, error)) *Promise {
 
 // Finally 方法添加一个 settled (fulfilled 或 rejected) 处理函数到 Promise。这个函数在 Promise 被 resolve 或 reject 时调用。
 // The Finally method adds a finally handler to the Promise. This function is called when the Promise is resolved or rejected.
-func (p *Promise) Finally(onFinally func()) *Promise {
+func (p *Promise) Finally(onFinally func() error) *Promise {
 	// 如果 onFinally 是 nil，则将其替换为默认函数。这个默认函数什么也不做。
 	// If onFinally is nil, replace it with the default function. This default function does nothing.
 	if onFinally == nil {
@@ -197,21 +197,33 @@ func (p *Promise) Finally(onFinally func()) *Promise {
 	// 返回一个新的 Promise，该 Promise 在 p settled 时执行 onFinally。无论 Promise 被 resolve 还是 reject，onFinally 都会被调用。
 	// Return a new Promise that executes onFinally when p is settled. Whether the Promise is resolved or rejected, onFinally will be called.
 	return p.Then(func(value interface{}) (interface{}, error) {
-		// 先执行 onFinally 函数，无论 Promise 的状态是解析还是拒绝，这个函数都会被调用。
-		// First execute the onFinally function, this function will be called regardless of whether the Promise state is resolved or rejected.
-		onFinally()
 
-		// 返回原 Promise 的值和被拒绝的原因。如果 Promise 被解析，那么值就是解析的结果，如果 Promise 被拒绝，那么原因就是拒绝的原因。
-		// Return the value and the reason for rejection of the original Promise. If the Promise is resolved, the value is the result of the resolution. If the Promise is rejected, the reason is the reason for the rejection.
-		return value, p.reason
+		// 调用 onFinally 函数
+		// Call the onFinally function
+		if err := onFinally(); err != nil {
+			// 如果 onFinally 返回错误，那么新的 Promise 会被 reject，原因是这个错误
+			// If onFinally returns an error, then the new Promise will be rejected with this error
+			return nil, err
+		} else {
+			// 如果 onFinally 没有返回错误，那么新的 Promise 会被 resolve，值是原 Promise 的解决值，原因是原 Promise 的拒绝原因
+			// If onFinally does not return an error, then the new Promise will be resolved with the resolution value of the original Promise, and the reason is the rejection reason of the original Promise
+			return value, p.reason
+		}
+
 	}, func(reason error) (interface{}, error) {
-		// 先执行 onFinally 函数，无论 Promise 的状态是解析还是拒绝，这个函数都会被调用。
-		// First execute the onFinally function, this function will be called regardless of whether the Promise state is resolved or rejected.
-		onFinally()
 
-		// 返回原 Promise 的值和被拒绝的原因。如果 Promise 被解析，那么值就是解析的结果，如果 Promise 被拒绝，那么原因就是拒绝的原因。
-		// Return the value and the reason for rejection of the original Promise. If the Promise is resolved, the value is the result of the resolution. If the Promise is rejected, the reason is the reason for the rejection.
-		return p.value, reason
+		// 调用 onFinally 函数
+		// Call the onFinally function
+		if err := onFinally(); err != nil {
+			// 如果 onFinally 返回错误，那么新的 Promise 会被 reject，原因是这个错误
+			// If onFinally returns an error, then the new Promise will be rejected with this error
+			return nil, err
+		} else {
+			// 如果 onFinally 没有返回错误，那么新的 Promise 会被 resolve，值是原 Promise 的解决值，原因是原 Promise 的拒绝原因
+			// If onFinally does not return an error, then the new Promise will be resolved with the resolution value of the original Promise, and the reason is the rejection reason of the original Promise
+			return p.value, reason
+		}
+
 	})
 }
 
