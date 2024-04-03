@@ -9,11 +9,11 @@ type PromiseState uint8
 var (
 	// defaultOnFulfilledFunc is the default function to be executed when a promise is fulfilled.
 	// defaultOnFulfilledFunc 是 Promise 被 fulfilled 时执行的默认函数。
-	defaultOnFulfilledFunc = func(value interface{}) interface{} { return value }
+	defaultOnFulfilledFunc = func(value interface{}) (interface{}, error) { return value, nil }
 
 	// defaultOnRejectedFunc is the default function to be executed when a promise is rejected.
 	// defaultOnRejectedFunc 是 Promise 被 rejected 时执行的默认函数。
-	defaultOnRejectedFunc = func(reason error) error { return reason }
+	defaultOnRejectedFunc = func(reason error) (interface{}, error) { return nil, reason }
 
 	// defaultOnFinallyFunc is the default function to be executed when a promise is settled (fulfilled or rejected).
 	// defaultOnFinallyFunc 是 Promise 被 settled (fulfilled 或 rejected) 时执行的默认函数。
@@ -80,31 +80,19 @@ type Promise struct {
 	reason error
 }
 
-// resolve 是一个方法，它将 Promise 的状态设置为 Fulfilled 并设置值。这个方法通常在执行操作成功完成时调用。
-// resolve is a method that sets the state of the Promise to Fulfilled and sets the value. This method is typically called when the execution operation successfully completes.
-func (p *Promise) resolve(value interface{}) {
-	// 如果 Promise 的状态是 Pending，那么我们可以将其状态设置为 Fulfilled。
-	// If the state of the Promise is Pending, then we can set its state to Fulfilled.
+// change 方法用于改变 Promise 的状态，设置 Promise 的值或者拒绝的原因。
+// The change method is used to change the state of the Promise, set the value of the Promise or the reason for rejection.
+func (p *Promise) change(state PromiseState, value interface{}, reason error) {
+	// 只有当 Promise 的状态是 Pending 时，我们才能改变它的状态。
+	// We can only change the state of the Promise when its state is Pending.
 	if p.state == Pending {
-		// 将状态设置为 Fulfilled。
-		// Set the state to Fulfilled.
-		p.state = Fulfilled
+		// 改变 Promise 的状态。
+		// Change the state of the Promise.
+		p.state = state
 
 		// 设置 Promise 的值，这个值是执行操作的结果。
 		// Set the value of the Promise, this value is the result of the execution operation.
 		p.value = value
-	}
-}
-
-// reject 是一个方法，它将 Promise 的状态设置为 Rejected 并设置原因。这个方法通常在执行操作失败时调用。
-// reject is a method that sets the state of the Promise to Rejected and sets the reason. This method is typically called when the execution operation fails.
-func (p *Promise) reject(reason error) {
-	// 如果 Promise 的状态是 Pending，那么我们可以将其状态设置为 Rejected。
-	// If the state of the Promise is Pending, then we can set its state to Rejected.
-	if p.state == Pending {
-		// 将状态设置为 Rejected。
-		// Set the state to Rejected.
-		p.state = Rejected
 
 		// 设置 Promise 被拒绝的原因，这个值是执行操作失败的原因。
 		// Set the reason the Promise was rejected, this value is the reason the execution operation failed.
@@ -112,9 +100,25 @@ func (p *Promise) reject(reason error) {
 	}
 }
 
+// resolve 方法用于将 Promise 的状态改变为 Fulfilled，并设置 Promise 的值。
+// The resolve method is used to change the state of the Promise to Fulfilled and set the value of the Promise.
+func (p *Promise) resolve(value interface{}, reason error) {
+	// 调用 change 方法，将 Promise 的状态改变为 Fulfilled，并设置 Promise 的值。
+	// Call the change method to change the state of the Promise to Fulfilled and set the value of the Promise.
+	p.change(Fulfilled, value, reason)
+}
+
+// reject 方法用于将 Promise 的状态改变为 Rejected，并设置 Promise 被拒绝的原因。
+// The reject method is used to change the state of the Promise to Rejected and set the reason the Promise was rejected.
+func (p *Promise) reject(value interface{}, reason error) {
+	// 调用 change 方法，将 Promise 的状态改变为 Rejected，并设置 Promise 被拒绝的原因。
+	// Call the change method to change the state of the Promise to Rejected and set the reason the Promise was rejected.
+	p.change(Rejected, value, reason)
+}
+
 // NewPromise 方法创建一个新的 Promise，并接受一个执行器函数作为参数。执行器函数接受两个参数：resolve 和 reject，分别用于在执行操作成功或失败时改变 Promise 的状态。
 // The NewPromise method creates a new Promise and accepts an executor function as a parameter. The executor function accepts two parameters: resolve and reject, which are used to change the state of the Promise when the execution operation succeeds or fails.
-func NewPromise(executor func(resolve func(interface{}), reject func(error))) *Promise {
+func NewPromise(executor func(resolve func(interface{}, error), reject func(interface{}, error))) *Promise {
 	// 如果执行器函数是 nil，那么我们没有办法改变 Promise 的状态，所以返回 nil。
 	// If the executor function is nil, then we have no way to change the state of the Promise, so return nil.
 	if executor == nil {
@@ -136,7 +140,7 @@ func NewPromise(executor func(resolve func(interface{}), reject func(error))) *P
 
 // Then 方法添加一个 fulfilled 和 rejected 处理函数到 Promise。这两个函数分别在 Promise 被 resolve 或 reject 时调用。
 // The Then method adds fulfillment and rejection handlers to the Promise. These two functions are called when the Promise is resolved or rejected.
-func (p *Promise) Then(onFulfilled func(interface{}) interface{}, onRejected func(error) error) *Promise {
+func (p *Promise) Then(onFulfilled func(interface{}) (interface{}, error), onRejected func(error) (interface{}, error)) *Promise {
 	// 如果 onFulfilled 函数是 nil，那么我们使用一个默认的 onFulfilled 函数，这个函数直接返回它的参数。
 	// If the onFulfilled function is nil, then we use a default onFulfilled function, this function simply returns its parameter.
 	if onFulfilled == nil {
@@ -151,30 +155,22 @@ func (p *Promise) Then(onFulfilled func(interface{}) interface{}, onRejected fun
 
 	// 返回一个新的 Promise，这个 Promise 的状态和值由 onFulfilled 或 onRejected 函数的返回值决定。
 	// Return a new Promise, the state and value of this Promise is determined by the return value of the onFulfilled or onRejected function.
-	return NewPromise(func(resolve func(interface{}), reject func(error)) {
+	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 根据 Promise 的状态进行不同的操作
 		// Perform different operations according to the state of the Promise
 		switch p.state {
-
-		// 如果 Promise 的状态是 Fulfilled，即 Promise 已经完成
-		// If the state of the Promise is Fulfilled, i.e., the Promise is fulfilled
-		case Fulfilled:
-			// 执行 onFulfilled 函数并解析 Promise。onFulfilled 函数的参数是原 Promise 的值，即 Promise 完成时的结果值。
-			// Execute the onFulfilled function and resolve the Promise. The parameter of the onFulfilled function is the value of the original Promise, i.e., the result value when the Promise is fulfilled.
-			resolve(onFulfilled(p.value))
-
-		// 如果 Promise 的状态是 Rejected，即 Promise 已经被拒绝
-		// If the state of the Promise is Rejected, i.e., the Promise is rejected
-		case Rejected:
-			// 如果 Promise 被拒绝的原因不是 nil，即存在一个明确的拒绝原因
-			// If the reason the Promise was rejected is not nil, i.e., there is a definite reason for the rejection
+		// 当 Promise 的状态是 Fulfilled 或 Rejected 时
+		// When the state of the Promise is Fulfilled or Rejected
+		case Fulfilled, Rejected:
+			// 如果 Promise 被拒绝，那么 reason 就不会是 nil
+			// If the Promise is rejected, then reason will not be nil
 			if p.reason != nil {
-				// 执行 onRejected 函数并拒绝 Promise。onRejected 函数的参数是原 Promise 被拒绝的原因。
-				// Execute the onRejected function and reject the Promise. The parameter of the onRejected function is the reason the original Promise was rejected.
+				// 调用 onRejected 函数，并将 Promise 被拒绝的原因作为参数传入
+				// Call the onRejected function and pass the reason the Promise was rejected as an argument
 				reject(onRejected(p.reason))
 			} else {
-				// 如果 Promise 被拒绝的原因是 nil，那么执行 onFulfilled 函数并解析 Promise。onFulfilled 函数的参数是原 Promise 的值。
-				// If the reason the Promise was rejected is nil, then execute the onFulfilled function and resolve the Promise. The parameter of the onFulfilled function is the value of the original Promise.
+				// 如果 Promise 被解析，那么 value 就是解析的结果
+				// If the Promise is resolved, then value is the result of the resolution
 				resolve(onFulfilled(p.value))
 			}
 		}
@@ -183,7 +179,7 @@ func (p *Promise) Then(onFulfilled func(interface{}) interface{}, onRejected fun
 
 // Catch 方法添加一个 rejected 处理函数到 Promise。这个函数在 Promise 被 reject 时调用。
 // The Catch method adds a rejection handler to the Promise. This function is called when the Promise is rejected.
-func (p *Promise) Catch(onRejected func(error) error) *Promise {
+func (p *Promise) Catch(onRejected func(error) (interface{}, error)) *Promise {
 	// 将 onRejected 函数添加到 Promise，如果 Promise 被 reject，则执行这个函数。
 	// Add the onRejected function to the Promise, if the Promise is rejected, this function will be executed.
 	return p.Then(nil, onRejected)
@@ -200,22 +196,22 @@ func (p *Promise) Finally(onFinally func()) *Promise {
 
 	// 返回一个新的 Promise，该 Promise 在 p settled 时执行 onFinally。无论 Promise 被 resolve 还是 reject，onFinally 都会被调用。
 	// Return a new Promise that executes onFinally when p is settled. Whether the Promise is resolved or rejected, onFinally will be called.
-	return p.Then(func(value interface{}) interface{} {
-		// 先执行 onFinally 函数，然后返回原 Promise 的值。
-		// First execute the onFinally function, then return the value of the original Promise.
+	return p.Then(func(value interface{}) (interface{}, error) {
+		// 先执行 onFinally 函数，无论 Promise 的状态是解析还是拒绝，这个函数都会被调用。
+		// First execute the onFinally function, this function will be called regardless of whether the Promise state is resolved or rejected.
 		onFinally()
 
-		// 返回原 Promise 的值。这个值将被传递给下一个 Then 或 Catch 方法。
-		// Return the value of the original Promise. This value will be passed to the next Then or Catch method.
-		return value
-	}, func(reason error) error {
-		// 先执行 onFinally 函数，然后返回原 Promise 被拒绝的原因。
-		// First execute the onFinally function, then return the reason the original Promise was rejected.
+		// 返回原 Promise 的值和被拒绝的原因。如果 Promise 被解析，那么值就是解析的结果，如果 Promise 被拒绝，那么原因就是拒绝的原因。
+		// Return the value and the reason for rejection of the original Promise. If the Promise is resolved, the value is the result of the resolution. If the Promise is rejected, the reason is the reason for the rejection.
+		return value, p.reason
+	}, func(reason error) (interface{}, error) {
+		// 先执行 onFinally 函数，无论 Promise 的状态是解析还是拒绝，这个函数都会被调用。
+		// First execute the onFinally function, this function will be called regardless of whether the Promise state is resolved or rejected.
 		onFinally()
 
-		// 先执行 onFinally 函数，然后返回原 Promise 的值。
-		// First execute the onFinally function, then return the value of the original Promise.
-		return reason
+		// 返回原 Promise 的值和被拒绝的原因。如果 Promise 被解析，那么值就是解析的结果，如果 Promise 被拒绝，那么原因就是拒绝的原因。
+		// Return the value and the reason for rejection of the original Promise. If the Promise is resolved, the value is the result of the resolution. If the Promise is rejected, the reason is the reason for the rejection.
+		return p.value, reason
 	})
 }
 
@@ -240,7 +236,7 @@ func (p *Promise) GetReason() error {
 func All(promises ...*Promise) *Promise {
 	// 创建一个新的 Promise，它的解析和拒绝函数由下面的逻辑决定。
 	// Create a new Promise, its resolve and reject functions are determined by the following logic.
-	return NewPromise(func(resolve func(interface{}), reject func(error)) {
+	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 创建一个切片来存储所有 Promise 的结果。这个切片的长度等于给定的 Promise 的数量。
 		// Create a slice to store the results of all Promises. The length of this slice is equal to the number of given Promises.
 		values := make([]interface{}, len(promises))
@@ -254,7 +250,7 @@ func All(promises ...*Promise) *Promise {
 		for i, promise := range promises {
 			// 对每个 Promise 添加一个成功和失败的回调。
 			// Add a success and failure callback to each Promise.
-			promise.Then(func(value interface{}) interface{} {
+			promise.Then(func(value interface{}) (interface{}, error) {
 				// 存储 Promise 的结果到对应的位置。
 				// Store the result of the Promise at the corresponding position.
 				values[i] = value
@@ -266,20 +262,20 @@ func All(promises ...*Promise) *Promise {
 				// 如果所有的 Promise 都已完成，那么解析这个 Promise，值为所有 Promise 的结果。
 				// If all Promises are fulfilled, resolve this Promise with the results of all Promises.
 				if count == len(promises) {
-					resolve(values)
+					resolve(values, nil)
 				}
 
 				// 返回 nil，因为我们不需要在这里改变 Promise 的值。
 				// Return nil because we don't need to change the value of the Promise here.
-				return nil
-			}, func(reason error) error {
+				return nil, nil
+			}, func(reason error) (interface{}, error) {
 				// 如果有任何一个 Promise 被拒绝，那么拒绝这个 Promise，原因为被拒绝的 Promise 的原因。
 				// If any Promise is rejected, reject this Promise with the reason of the rejected Promise.
-				reject(reason)
+				reject(nil, reason)
 
 				// 返回 nil，因为我们不需要在这里改变 Promise 的值。
 				// Return nil because we don't need to change the value of the Promise here.
-				return nil
+				return nil, nil
 			})
 		}
 	})
@@ -290,7 +286,7 @@ func All(promises ...*Promise) *Promise {
 func AllSettled(promises ...*Promise) *Promise {
 	// 创建一个新的 Promise，它的解析和拒绝函数由下面的逻辑决定。
 	// Create a new Promise, its resolve and reject functions are determined by the following logic.
-	return NewPromise(func(resolve func(interface{}), reject func(error)) {
+	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 创建一个切片来存储所有 Promise 的结果。这个切片的长度等于给定的 Promise 的数量。
 		// Create a slice to store the results of all Promises. The length of this slice is equal to the number of given Promises.
 		values := make([]interface{}, len(promises))
@@ -304,7 +300,7 @@ func AllSettled(promises ...*Promise) *Promise {
 		for i, promise := range promises {
 			// 对每个 Promise 添加一个成功和失败的回调。
 			// Add a success and failure callback to each Promise.
-			promise.Then(func(value interface{}) interface{} {
+			promise.Then(func(value interface{}) (interface{}, error) {
 				// 存储 Promise 的结果到对应的位置。
 				// Store the result of the Promise at the corresponding position.
 				values[i] = value
@@ -316,13 +312,13 @@ func AllSettled(promises ...*Promise) *Promise {
 				// 如果所有的 Promise 都已 settled，那么解析这个 Promise，值为所有 Promise 的结果。
 				// If all Promises are settled, resolve this Promise with the results of all Promises.
 				if count == len(promises) {
-					resolve(values)
+					resolve(values, nil)
 				}
 
 				// 返回 nil，因为我们不需要在这里改变 Promise 的值。
 				// Return nil because we don't need to change the value of the Promise here.
-				return nil
-			}, func(reason error) error {
+				return nil, nil
+			}, func(reason error) (interface{}, error) {
 				// 存储 Promise 被拒绝的原因到对应的位置。
 				// Store the reason the Promise was rejected at the corresponding position.
 				values[i] = reason
@@ -334,12 +330,12 @@ func AllSettled(promises ...*Promise) *Promise {
 				// 如果所有的 Promise 都已 settled，那么解析这个 Promise，值为所有 Promise 的结果。
 				// If all Promises are settled, resolve this Promise with the results of all Promises.
 				if count == len(promises) {
-					resolve(values)
+					resolve(values, nil)
 				}
 
 				// 返回 nil，因为我们不需要在这里改变 Promise 的值。
 				// Return nil because we don't need to change the value of the Promise here.
-				return nil
+				return nil, nil
 			})
 		}
 	})
@@ -350,7 +346,7 @@ func AllSettled(promises ...*Promise) *Promise {
 func Any(promises ...*Promise) *Promise {
 	// 创建一个新的 Promise，它的解析和拒绝函数由下面的逻辑决定。
 	// Create a new Promise, its resolve and reject functions are determined by the following logic.
-	return NewPromise(func(resolve func(interface{}), reject func(error)) {
+	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 创建一个切片来存储所有 Promise 的错误。这个切片的长度等于给定的 Promise 的数量。
 		// Create a slice to store the errors of all Promises. The length of this slice is equal to the number of given Promises.
 		errors := make([]error, len(promises))
@@ -364,15 +360,15 @@ func Any(promises ...*Promise) *Promise {
 		for i, promise := range promises {
 			// 对每个 Promise 添加一个成功和失败的回调。
 			// Add a success and failure callback to each Promise.
-			promise.Then(func(value interface{}) interface{} {
+			promise.Then(func(value interface{}) (interface{}, error) {
 				// 如果有任何一个 Promise 完成，那么解析这个 Promise，值为完成的 Promise 的值。
 				// If any Promise is fulfilled, resolve this Promise with the value of the fulfilled Promise.
-				resolve(value)
+				resolve(value, nil)
 
 				// 返回 nil，因为我们不需要在这里改变 Promise 的值。
 				// Return nil because we don't need to change the value of the Promise here.
-				return nil
-			}, func(reason error) error {
+				return nil, nil
+			}, func(reason error) (interface{}, error) {
 				// 存储 Promise 被拒绝的原因到对应的位置。
 				// Store the reason the Promise was rejected at the corresponding position.
 				errors[i] = reason
@@ -384,12 +380,12 @@ func Any(promises ...*Promise) *Promise {
 				// 如果所有的 Promise 都被拒绝，那么拒绝这个 Promise，原因为所有 Promise 被拒绝的原因的集合。
 				// If all Promises are rejected, reject this Promise with the collection of reasons all Promises were rejected.
 				if count == len(promises) {
-					reject(&AggregateError{Errors: errors})
+					reject(nil, &AggregateError{Errors: errors})
 				}
 
 				// 返回 nil，因为我们不需要在这里改变 Promise 的值。
 				// Return nil because we don't need to change the value of the Promise here.
-				return nil
+				return nil, nil
 			})
 		}
 	})
@@ -400,28 +396,28 @@ func Any(promises ...*Promise) *Promise {
 func Race(promises ...*Promise) *Promise {
 	// 创建一个新的 Promise，它的解析和拒绝函数由下面的逻辑决定。
 	// Create a new Promise, its resolve and reject functions are determined by the following logic.
-	return NewPromise(func(resolve func(interface{}), reject func(error)) {
+	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 遍历给定的每一个 Promise。
 		// Iterate over each given Promise.
 		for _, promise := range promises {
 			// 对每个 Promise 添加一个成功和失败的回调。
 			// Add a success and failure callback to each Promise.
-			promise.Then(func(value interface{}) interface{} {
+			promise.Then(func(value interface{}) (interface{}, error) {
 				// 如果有任何一个 Promise 完成，那么解析这个 Promise，值为完成的 Promise 的值。
 				// If any Promise is fulfilled, resolve this Promise with the value of the fulfilled Promise.
-				resolve(value)
+				resolve(value, nil)
 
 				// 返回 nil，因为我们不需要在这里改变 Promise 的值。
 				// Return nil because we don't need to change the value of the Promise here.
-				return nil
-			}, func(reason error) error {
+				return nil, nil
+			}, func(reason error) (interface{}, error) {
 				// 如果有任何一个 Promise 被拒绝，那么拒绝这个 Promise，原因为被拒绝的 Promise 的原因。
 				// If any Promise is rejected, reject this Promise with the reason of the rejected Promise.
-				reject(reason)
+				reject(nil, reason)
 
 				// 返回 nil，因为我们不需要在这里改变 Promise 的值。
 				// Return nil because we don't need to change the value of the Promise here.
-				return nil
+				return nil, nil
 			})
 		}
 	})

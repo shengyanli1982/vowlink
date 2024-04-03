@@ -10,22 +10,22 @@ import (
 func main() {
 	// 创建 3 个 promise
 	// Create 3 promises
-	p1 := vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第一个 promise 直接解析为 "Promise 1"
 		// The first promise is directly resolved to "Promise 1"
-		resolve("Promise 1")
+		resolve("Promise 1", nil)
 	})
 
-	p2 := vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第二个 promise 被拒绝，原因是 "Promise 2 rejected"
 		// The second promise is rejected with the reason "Promise 2 rejected"
-		reject(errors.New("Promise 2 rejected"))
+		reject(nil, errors.New("Promise 2 rejected"))
 	})
 
-	p3 := vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第三个 promise 直接解析为 "Promise 3"
 		// The third promise is directly resolved to "Promise 3"
-		resolve("Promise 3")
+		resolve("Promise 3", nil)
 	})
 
 	// AllSettled() 将等待所有的 promise 被解析或拒绝，并返回一个带有值的 promise

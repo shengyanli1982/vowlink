@@ -9,34 +9,34 @@ import (
 func main() {
 	// 创建 3 个 promise
 	// Create 3 promises
-	p1 := vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第一个 promise 直接解析为 "Promise"
 		// The first promise is directly resolved to "Promise"
-		resolve("Promise")
-	}).Then(func(value interface{}) interface{} {
+		resolve("Promise", nil)
+	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 1"
 		// In the Then method, append " 1" to the resolved value
-		return value.(string) + " 1"
+		return value.(string) + " 1", nil
 	}, nil)
 
-	p2 := vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第二个 promise 直接解析为 "Promise"
 		// The second promise is directly resolved to "Promise"
-		resolve("Promise")
-	}).Then(func(value interface{}) interface{} {
+		resolve("Promise", nil)
+	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 2"
 		// In the Then method, append " 2" to the resolved value
-		return value.(string) + " 2"
+		return value.(string) + " 2", nil
 	}, nil)
 
-	p3 := vl.NewPromise(func(resolve func(interface{}), reject func(error)) {
+	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 		// 第三个 promise 直接解析为 "Promise"
 		// The third promise is directly resolved to "Promise"
-		resolve("Promise")
-	}).Then(func(value interface{}) interface{} {
+		resolve("Promise", nil)
+	}).Then(func(value interface{}) (interface{}, error) {
 		// 在 Then 方法中，将解析的值加上 " 3"
 		// In the Then method, append " 3" to the resolved value
-		return value.(string) + " 3"
+		return value.(string) + " 3", nil
 	}, nil)
 
 	// All() 将等待所有的 promise 被解析，并返回一个带有所有值的 promise

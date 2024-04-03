@@ -30,9 +30,9 @@ func main() {
 		// This Catch function will be executed when the previous Catch function returns an error
 		fmt.Println("> catch 2")
 
-		// 返回一个新的错误，将会被下一个 Catch 函数接收
-		// Return a new error, which will be received by the next Catch function
-		return nil, errors.New("rejected.200")
+		// 返回一个新的值，将会被下一个 Then 函数接收
+		// Return a new value, which will be received by the next Then function
+		return "[error handled]", nil
 
 	}).Catch(func(err error) (interface{}, error) {
 		// 当上一个 Catch 函数返回错误时，会执行这个 Catch 函数
@@ -41,7 +41,7 @@ func main() {
 
 		// 返回一个新的错误，将会被下一个 Catch 函数接收
 		// Return a new error, which will be received by the next Catch function
-		return nil, errors.New("rejected.300")
+		return nil, errors.New("rejected.200")
 
 	}).Then(func(value interface{}) (interface{}, error) {
 		// 当 Promise 被解决时，会执行这个 Then 函数
@@ -50,7 +50,7 @@ func main() {
 
 		// 返回一个新的值，将会被下一个 Then 函数接收
 		// Return a new value, which will be received by the next Then function
-		return fmt.Sprintf("Never be here!! recover value: %v", value), nil
+		return fmt.Sprintf("Should be here. recover value: %v", value), nil
 
 	}, func(err error) (interface{}, error) {
 		// 当 Promise 被拒绝时，会执行这个 Catch 函数
@@ -59,15 +59,16 @@ func main() {
 
 		// 返回一个新的错误，将会被下一个 Catch 函数接收
 		// Return a new error, which will be received by the next Catch function
-		return nil, errors.New("Should be here.")
+		return nil, errors.New("Never be here!!")
+
 	})
 
-	// 打印 Promise 被拒绝的原因
-	// Print the reason the Promise was rejected
+	// 输出 Promise 的拒绝原因，这里一定是 "nil"
+	// Print the rejection reason of the Promise, it must be "nil" here
 	fmt.Println("reason: ", result.GetReason())
 
-	// 打印 Promise 的值，但是在这个例子中，Promise 会被拒绝，所以值会是 nil
-	// Print the value of the Promise, but in this case, the Promise will be rejected, so the value will be nil
+	// 输出 Promise 的解决值，这里一定是 "Should be here."
+	// Print the resolution value of the Promise, it must be "Should be here." here
 	fmt.Println("value: ", result.GetValue())
 
 }
