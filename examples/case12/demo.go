@@ -12,8 +12,8 @@ func main() {
 	// 创建一个新的 Promise
 	// Create a new Promise
 	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
-		// 这个 Promise 会立即被拒绝，原因是 "Something went wrong"
-		// This Promise will be immediately rejected with the reason "Something went wrong"
+		// 这个 Promise 将继续执行，并将错误 "Something went wrong" 作为值传递给下一个 Promise
+		// This Promise will continue to execute and pass the error "Something went wrong" as a value to the next Promise
 		reject("Something went wrong", nil)
 
 	}).Then(func(data interface{}) (interface{}, error) {
