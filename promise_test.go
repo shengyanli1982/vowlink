@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -611,5 +612,96 @@ func TestPromise_FinallyWithError(t *testing.T) {
 
 		assert.Equal(t, "Handled error: Finally error", p.GetReason().Error(), "Expected reason to be 'Handled error: Finally error'")
 		assert.Nil(t, p.GetValue(), "Expected value to be nil")
+	})
+}
+
+func TestNewPromise(t *testing.T) {
+	t.Run("nil handler", func(t *testing.T) {
+		p := NewPromise(nil)
+		assert.Nil(t, p, "Expected nil when handler is nil")
+	})
+
+	t.Run("initial state", func(t *testing.T) {
+		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			// Empty handler
+		})
+		assert.Equal(t, Pending, p.state, "Expected initial state to be Pending")
+		assert.Nil(t, p.value, "Expected initial value to be nil")
+		assert.Nil(t, p.reason, "Expected initial reason to be nil")
+	})
+}
+
+func TestPromise_ConcurrentAccess(t *testing.T) {
+	t.Run("concurrent resolve/reject", func(t *testing.T) {
+		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			go func() {
+				resolve("success", nil)
+			}()
+			go func() {
+				reject(nil, errors.New("error"))
+			}()
+		})
+
+		// Wait for goroutines to complete
+		time.Sleep(100 * time.Millisecond)
+
+		// State should be either Fulfilled or Rejected, but not both
+		assert.True(t, p.state == Fulfilled || p.state == Rejected,
+			"Expected state to be either Fulfilled or Rejected")
+		assert.True(t, (p.value == "success" && p.reason == nil) ||
+			(p.value == nil && p.reason != nil),
+			"Expected either value or reason to be set, not both")
+	})
+}
+
+func TestPromise_StateImmutability(t *testing.T) {
+	t.Run("fulfilled state cannot be changed", func(t *testing.T) {
+		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			resolve("first", nil)
+			resolve("second", nil)           // should not change state
+			reject(nil, errors.New("error")) // should not change state
+		})
+
+		assert.Equal(t, Fulfilled, p.state)
+		assert.Equal(t, "first", p.value)
+		assert.Nil(t, p.reason)
+	})
+
+	t.Run("rejected state cannot be changed", func(t *testing.T) {
+		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			reject(nil, errors.New("first error"))
+			reject(nil, errors.New("second error")) // should not change state
+			resolve("success", nil)                 // should not change state
+		})
+
+		assert.Equal(t, Rejected, p.state)
+		assert.Equal(t, "first error", p.reason.Error())
+		assert.Nil(t, p.value)
+	})
+}
+
+func TestPromise_EmptyArray(t *testing.T) {
+	t.Run("All with empty array", func(t *testing.T) {
+		result := All()
+		assert.Equal(t, Fulfilled, result.state)
+		assert.Equal(t, []interface{}{}, result.value)
+	})
+
+	t.Run("Race with empty array", func(t *testing.T) {
+		result := Race()
+		assert.Equal(t, Fulfilled, result.state)
+		assert.Nil(t, result.value)
+	})
+
+	t.Run("Any with empty array", func(t *testing.T) {
+		result := Any()
+		assert.Equal(t, Rejected, result.state)
+		assert.IsType(t, &AggregateError{}, result.reason)
+	})
+
+	t.Run("AllSettled with empty array", func(t *testing.T) {
+		result := AllSettled()
+		assert.Equal(t, Fulfilled, result.state)
+		assert.Equal(t, []interface{}{}, result.value)
 	})
 }

@@ -10,17 +10,15 @@ English | [中文](./README_CN.md)
 
 ## Introduction
 
-Introducing `VowLink` in a few words can be challenging. Even though I have finished the first version of `VowLink`, I still struggle to find the perfect way to describe it.
+Ever tried to explain quantum physics to your cat? Well, explaining `VowLink` might be just as challenging! Even after completing its first version, finding the perfect words to describe this elegant solution feels like trying to catch a laser pointer dot - always just out of reach.
 
-In my development experience, I have often encountered the problem of code being too nested and logic becoming too complex. I wanted to find a solution that would allow me to avoid getting stuck in the middle of the code and simplify the logic. That's when I discovered the promise concept in ES6, which was a step in the right direction but not perfect. This inspired me to create something better.
-
-And thus, `VowLink` was born. It is a Golang project that draws inspiration from ES6 promises and provides a powerful tool for chaining function calls.
+As a developer, I've frequently encountered the "callback pyramid of doom" - you know, that moment when your code starts looking like an ASCII art of the Egyptian pyramids. While ES6 Promises were a step in the right direction, I felt there was room for something even better in the Go ecosystem. Thus, `VowLink` was born - a Promise implementation that makes your Go code flow as smoothly as butter on a hot pancake.
 
 ## Advantages
 
--   Simple and easy to use
--   No third-party dependencies
--   Supports various methods such as `then()`, `catch()`, `finally()`, `all()`, `race()`, `any()`, `allSettled()`
+-   Simple as pie (and just as delicious to use)
+-   Zero dependencies (because sometimes less is more)
+-   Full Promise API support including `then()`, `catch()`, `finally()`, `all()`, `race()`, `any()`, and `allSettled()` (it's like having the whole Promise family reunion!)
 
 ## Installation
 
@@ -30,7 +28,7 @@ go get github.com/shengyanli1982/vowlink
 
 ## Quick Start
 
-With `VowLink`, you can start using it in just a few minutes. It's incredibly easy to use and requires minimal setup.
+Getting started with `VowLink` is easier than making instant noodles. Here's a taste of what it can do:
 
 **Example**
 
@@ -38,31 +36,20 @@ With `VowLink`, you can start using it in just a few minutes. It's incredibly ea
 package main
 
 import (
-	"fmt"
-
-	vl "github.com/shengyanli1982/vowlink"
+    "fmt"
+    vl "github.com/shengyanli1982/vowlink"
 )
 
 func main() {
-	// vowlink 像一个链条，你可以在链条上添加更多的 then() 来在 promise 解析后做更多的事情。
-	// vowlink is like a chain, you can add more then() to the chain to do more things after the promise is resolved.
-	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
-		// 这个 promise 直接解析为 "hello world"
-		// This promise is directly resolved to "hello world"
-		resolve("hello world", nil)
-	}).Then(func(value interface{}) (interface{}, error) {
-		// 在第一个 Then 方法中，我们将解析的值加上 " vowlink"
-		// In the first Then method, we append " vowlink" to the resolved value
-		return value.(string) + " vowlink", nil
-	}, nil).Then(func(value interface{}) (interface{}, error) {
-		// 在第二个 Then 方法中，我们将解析的值加上 " !!"
-		// In the second Then method, we append " !!" to the resolved value
-		return value.(string) + " !!", nil
-	}, nil)
+    result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+        resolve("hello world", nil)
+    }).Then(func(value interface{}) (interface{}, error) {
+        return value.(string) + " vowlink", nil
+    }, nil).Then(func(value interface{}) (interface{}, error) {
+        return value.(string) + " !!", nil
+    }, nil)
 
-	// 从 promise 中获取值并打印
-	// Get the value from the promise and print it
-	fmt.Println(result.GetValue())
+    fmt.Println(result.GetValue())
 }
 ```
 
@@ -73,20 +60,21 @@ $ go run demo.go
 hello world vowlink !!
 ```
 
-It's so easy, right?
+See? That was smoother than a fresh jar of skippy!
 
-Instead of using the same old examples to explain how to use VowLink, let's dive into a real case to demonstrate its usage. By using practical examples, we can better understand how VowLink can help us achieve our goals.
+Instead of boring you with theoretical examples that put coffee to shame, let's dive into some real-world scenarios. These practical examples will show you how `VowLink` can make your code dance like nobody's watching.
 
 ### Core Rules
 
 > [!IMPORTANT]
 >
-> The `Rules` section is the core of the `VowLink` project. It is important to understand the rules before using `VowLink`.
+> Before we jump in, here are the golden rules of `VowLink` - think of them as the "Ten Commandments" of Promise handling in Go.
 
-1. All `Then`, `Catch`, and `Finally` methods of a Promise can return an error. If an error is returned (even if it is the original error), it will be handled by the next `Then` or `Catch` method until the returned error is nil.
-2. `vowlink` supports the `resolve` and `reject` methods, which can return data and error, allowing `NewPromise` to make a second choice.
-3. The `GetValue` and `GetReason` methods are specific to the Promise and are terminal methods, meaning they do not return a `Promise` object.
-4. Although `vowlink` is inspired by `JavaScript Promise`, it is not identical to `JavaScript Promise` as `Golang` has its own differences.
+1. All `Then`, `Catch`, and `Finally` methods can return errors. Like a game of hot potato, these errors will keep bouncing through the chain until someone handles them properly (returns nil).
+2. The `resolve` and `reject` methods support both data and error returns, giving `NewPromise` the flexibility of a yoga master.
+3. `GetValue` and `GetReason` are terminal methods - they're like the full stop at the end of a sentence. Once called, they don't return a Promise object.
+4. While `VowLink` takes inspiration from JavaScript Promises, it's been tailored for Go like a bespoke suit.
+5. Don't use goroutines inside `Then()`, `Catch()`, or `Finally()` methods. If you need async operations, wrap the entire Promise in a goroutine - it's like putting the whole party in a separate room.
 
 ### Study Cases
 
@@ -387,7 +375,7 @@ func main() {
 		return errors.New("error in finally 2")
 
 	}).Then(func(data interface{}) (interface{}, error) {
-		// 当 Promise 被解决时，会执行这个 Then 函数
+		// 当 Promise 被���决时，会执行这个 Then 函数
 		// This Then function will be executed when the Promise is resolved
 
 		// 返回解决的值，将会被下一个 Then 函数接收
@@ -936,7 +924,7 @@ func main() {
 	// Print the rejection reason of the Promise, it must be "nil" here
 	fmt.Println("reason: ", result.GetReason())
 
-	// 输出 Promise 的解决值，这里一定是 "Should be here."
+	// 输出 Promise 的解决��，这里一定是 "Should be here."
 	// Print the resolution value of the Promise, it must be "Should be here." here
 	fmt.Println("value: ", result.GetValue())
 
@@ -1008,7 +996,7 @@ func main() {
 
 	})
 
-	// 输出 Promise 的拒绝原因
+	// 输出 Promise 的拒绝���因
 	// Print the rejection reason of the Promise
 	fmt.Println("reason: ", result.GetReason())
 
@@ -1098,4 +1086,56 @@ $ go run demo.go
 > then 1
 reason:  <nil>
 value:  Something went wrong
+```
+
+#### # Case 13
+
+Here's how to properly handle asynchronous operations with VowLink:
+
+> [!IMPORTANT]
+>
+> Do not use goroutines (e.g., `go func()`) inside `Then()`, `Catch()`, or `Finally()` methods. If you need asynchronous execution, wrap the entire Promise as a goroutine instead.
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	vl "github.com/shengyanli1982/vowlink"
+)
+
+func main() {
+	// Create a channel to wait for the async operation
+	done := make(chan struct{})
+
+	// Launch the async operation
+	go func() {
+		result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			// Simulate some async work
+			time.Sleep(1 * time.Second)
+			resolve("Async operation completed", nil)
+		}).Then(func(value interface{}) (interface{}, error) {
+			fmt.Println("> Processing async result")
+			return value.(string) + "!", nil
+		}, nil)
+
+		fmt.Println("Final result:", result.GetValue())
+		close(done)
+	}()
+
+	// Wait for the async operation to complete
+	<-done
+	fmt.Println("Main function completed")
+}
+```
+
+**Result**
+
+```bash
+$ go run demo.go
+> Processing async result
+Final result: Async operation completed!
+Main function completed
 ```
