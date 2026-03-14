@@ -3,6 +3,8 @@ package vowlink
 import (
 	"errors"
 	"fmt"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -633,24 +635,72 @@ func TestNewPromise(t *testing.T) {
 
 func TestPromise_ConcurrentAccess(t *testing.T) {
 	t.Run("concurrent resolve/reject", func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(2)
+
 		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 			go func() {
+				defer wg.Done()
 				resolve("success", nil)
 			}()
 			go func() {
+				defer wg.Done()
 				reject(nil, errors.New("error"))
 			}()
 		})
 
-		// Wait for goroutines to complete
-		time.Sleep(100 * time.Millisecond)
+		wg.Wait()
 
 		// State should be either Fulfilled or Rejected, but not both
-		assert.True(t, p.state == Fulfilled || p.state == Rejected,
+		state := p.getState()
+		value := p.GetValue()
+		reason := p.GetReason()
+
+		assert.True(t, state == Fulfilled || state == Rejected,
 			"Expected state to be either Fulfilled or Rejected")
-		assert.True(t, (p.value == "success" && p.reason == nil) ||
-			(p.value == nil && p.reason != nil),
+		assert.True(t, (value == "success" && reason == nil) ||
+			(value == nil && reason != nil),
 			"Expected either value or reason to be set, not both")
+	})
+}
+
+func TestPromise_NoGoroutineLeak(t *testing.T) {
+	t.Run("concurrent settle should not leak goroutines", func(t *testing.T) {
+		const iterations = 2000
+
+		before := runtime.NumGoroutine()
+		for i := 0; i < iterations; i++ {
+			var wg sync.WaitGroup
+			wg.Add(2)
+
+			_ = NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+				go func() {
+					defer wg.Done()
+					resolve("ok", nil)
+				}()
+				go func() {
+					defer wg.Done()
+					reject(nil, errors.New("error"))
+				}()
+			})
+
+			wg.Wait()
+		}
+
+		// 在限定时间内轮询，降低慢机上的抖动误报。
+		deadline := time.Now().Add(500 * time.Millisecond)
+		for {
+			runtime.GC()
+			after := runtime.NumGoroutine()
+			if after <= before+4 {
+				return
+			}
+			if time.Now().After(deadline) {
+				assert.LessOrEqual(t, after, before+4, "possible goroutine leak detected: before=%d after=%d", before, after)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	})
 }
 

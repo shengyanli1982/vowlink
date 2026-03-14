@@ -1,6 +1,9 @@
 package vowlink
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 // PromiseState 表示 Promise 的状态
 type PromiseState uint8
@@ -46,6 +49,7 @@ const (
 
 // Promise 表示一个异步操作
 type Promise struct {
+	mu     sync.RWMutex
 	state  PromiseState
 	value  interface{}
 	reason error
@@ -53,11 +57,26 @@ type Promise struct {
 
 // 改变 Promise 的状态（仅在 Pending 状态下有效）
 func (p *Promise) change(state PromiseState, value interface{}, reason error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.state == Pending {
 		p.state = state
 		p.value = value
 		p.reason = reason
 	}
+}
+
+func (p *Promise) snapshot() (PromiseState, interface{}, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	return p.state, p.value, p.reason
+}
+
+func (p *Promise) getState() PromiseState {
+	state, _, _ := p.snapshot()
+	return state
 }
 
 // 将 Promise 标记为已完成
@@ -93,12 +112,13 @@ func (p *Promise) Then(successHandler func(interface{}) (interface{}, error), er
 	}
 
 	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
-		switch p.state {
+		state, value, reason := p.snapshot()
+		switch state {
 		case Fulfilled, Rejected:
-			if p.reason != nil {
-				reject(errorHandler(p.reason))
+			if reason != nil {
+				reject(errorHandler(reason))
 			} else {
-				resolve(successHandler(p.value))
+				resolve(successHandler(value))
 			}
 		}
 	})
@@ -134,11 +154,13 @@ func (p *Promise) Finally(cleanupHandler func() error) *Promise {
 }
 
 func (p *Promise) GetValue() interface{} {
-	return p.value
+	_, value, _ := p.snapshot()
+	return value
 }
 
 func (p *Promise) GetReason() error {
-	return p.reason
+	_, _, reason := p.snapshot()
+	return reason
 }
 
 // All 等待所有 Promise 完成
