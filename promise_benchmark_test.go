@@ -226,7 +226,7 @@ func BenchmarkPromiseRace(b *testing.B) {
 	}
 }
 
-func BenchmarkAggregateErrorError(b *testing.B) {
+func BenchmarkAggregateError(b *testing.B) {
 	for _, size := range []int{1, 8, 64} {
 		size := size
 		aggregateErr := NewAggregateError(size)
