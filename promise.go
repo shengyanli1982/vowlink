@@ -2,11 +2,9 @@ package vowlink
 
 import "strings"
 
-// PromiseState represents the state of a Promise
 // PromiseState 表示 Promise 的状态
 type PromiseState uint8
 
-// Default handlers for Promise operations
 // Promise 操作的默认处理函数
 var (
 	defaultSuccessHandler = func(value interface{}) (interface{}, error) { return value, nil }
@@ -14,7 +12,6 @@ var (
 	defaultCleanupHandler = func() error { return nil }
 )
 
-// AggregateError represents a collection of errors
 // AggregateError 表示错误集合
 type AggregateError struct {
 	Errors []error
@@ -40,15 +37,13 @@ func NewAggregateError(capacity int) *AggregateError {
 	}
 }
 
-// Promise states constants
 // Promise 状态常量
 const (
-	Pending   PromiseState = iota // Promise is pending / Promise 正在等待
-	Fulfilled                     // Promise is fulfilled / Promise 已成功完成
-	Rejected                      // Promise is rejected / Promise 已拒绝
+	Pending   PromiseState = iota // 等待中
+	Fulfilled                     // 已完成
+	Rejected                      // 已拒绝
 )
 
-// Promise represents an asynchronous operation
 // Promise 表示一个异步操作
 type Promise struct {
 	state  PromiseState
@@ -56,6 +51,7 @@ type Promise struct {
 	reason error
 }
 
+// 改变 Promise 的状态（仅在 Pending 状态下有效）
 func (p *Promise) change(state PromiseState, value interface{}, reason error) {
 	if p.state == Pending {
 		p.state = state
@@ -64,15 +60,16 @@ func (p *Promise) change(state PromiseState, value interface{}, reason error) {
 	}
 }
 
+// 将 Promise 标记为已完成
 func (p *Promise) resolve(value interface{}, reason error) {
 	p.change(Fulfilled, value, reason)
 }
 
+// 将 Promise 标记为已拒绝
 func (p *Promise) reject(value interface{}, reason error) {
 	p.change(Rejected, value, reason)
 }
 
-// NewPromise creates a new Promise with the given handler
 // NewPromise 使用给定的处理函数创建新的 Promise
 func NewPromise(promiseHandler func(resolve func(interface{}, error), reject func(interface{}, error))) *Promise {
 	if promiseHandler == nil {
@@ -86,7 +83,6 @@ func NewPromise(promiseHandler func(resolve func(interface{}, error), reject fun
 	return p
 }
 
-// Then registers callbacks to be called when the Promise is settled
 // Then 注册 Promise 完成时要调用的回调函数
 func (p *Promise) Then(successHandler func(interface{}) (interface{}, error), errorHandler func(error) (interface{}, error)) *Promise {
 	if successHandler == nil {
@@ -108,13 +104,11 @@ func (p *Promise) Then(successHandler func(interface{}) (interface{}, error), er
 	})
 }
 
-// Catch registers a callback to be called when the Promise is rejected
 // Catch 注册 Promise 被拒绝时要调用的回调函数
 func (p *Promise) Catch(errorHandler func(error) (interface{}, error)) *Promise {
 	return p.Then(nil, errorHandler)
 }
 
-// Finally registers a cleanup callback to be called regardless of the Promise state
 // Finally 注册无论 Promise 状态如何都会调用的清理回调函数
 func (p *Promise) Finally(cleanupHandler func() error) *Promise {
 	if cleanupHandler == nil {
@@ -147,8 +141,6 @@ func (p *Promise) GetReason() error {
 	return p.reason
 }
 
-// All waits for all promises to be fulfilled
-// If any promise is rejected, the resulting promise is rejected
 // All 等待所有 Promise 完成
 // 如果任何一个 Promise 被拒绝，结果 Promise 也会被拒绝
 func All(promises ...*Promise) *Promise {
@@ -183,7 +175,6 @@ func All(promises ...*Promise) *Promise {
 	})
 }
 
-// AllSettled waits for all promises to settle, regardless of their state
 // AllSettled 等待所有 Promise 完成，无论其状态如何
 func AllSettled(promises ...*Promise) *Promise {
 	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
@@ -215,8 +206,6 @@ func AllSettled(promises ...*Promise) *Promise {
 	})
 }
 
-// Any returns a promise that fulfills when any of the input promises fulfills
-// If all promises are rejected, returns an AggregateError
 // Any 返回一个在任意输入 Promise 成功时完成的 Promise
 // 如果所有 Promise 都被拒绝，返回一个 AggregateError
 func Any(promises ...*Promise) *Promise {
@@ -251,7 +240,6 @@ func Any(promises ...*Promise) *Promise {
 	})
 }
 
-// Race returns a promise that settles with the same state as the first settled promise
 // Race 返回一个与第一个完成的 Promise 具有相同状态的 Promise
 func Race(promises ...*Promise) *Promise {
 	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {

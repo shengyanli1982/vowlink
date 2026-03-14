@@ -62,7 +62,7 @@ func TestPromise_Then(t *testing.T) {
 		assert.Equal(t, "Hello, World! vowlink!", result.value, "Expected value to be 'Hello, World! vowlink!'")
 	})
 
-	// 当.then中返回的不是promise对象时（包括undefined），p2的状态 一直都是fulfilled，且值为undefined
+	// 当.then中返回的不是promise对象时（包括undefined），p2的状态一直都是fulfilled，且值为undefined
 	t.Run("Then Chain with Rejection", func(t *testing.T) {
 		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
 			resolve("Hello, World!", nil)
