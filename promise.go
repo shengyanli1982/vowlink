@@ -47,23 +47,41 @@ const (
 	Rejected                      // 已拒绝
 )
 
-// Promise 表示一个异步操作
-type Promise struct {
-	mu     sync.RWMutex
-	state  PromiseState
-	value  interface{}
-	reason error
+// subscriber 注册 Pending 状态 Promise 的回调
+type subscriber struct {
+	onFulfilled func(interface{}) (interface{}, error)
+	onRejected  func(error) (interface{}, error)
+	resolve     func(interface{}, error)
+	reject      func(interface{}, error)
 }
 
-// 改变 Promise 的状态（仅在 Pending 状态下有效）
-func (p *Promise) change(state PromiseState, value interface{}, reason error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// Promise 表示一个异步操作
+type Promise struct {
+	mu          sync.RWMutex
+	state       PromiseState
+	value       interface{}
+	reason      error
+	subscribers []subscriber
+}
 
-	if p.state == Pending {
-		p.state = state
-		p.value = value
-		p.reason = reason
+func (p *Promise) settle(state PromiseState, value interface{}, reason error) {
+	p.mu.Lock()
+	if p.state != Pending {
+		p.mu.Unlock()
+		return
+	}
+	p.state = state
+	p.value = value
+	p.reason = reason
+	subs := p.subscribers
+	p.subscribers = nil
+	p.mu.Unlock()
+	for _, sub := range subs {
+		if reason != nil {
+			sub.reject(sub.onRejected(reason))
+		} else {
+			sub.resolve(sub.onFulfilled(value))
+		}
 	}
 }
 
@@ -79,14 +97,12 @@ func (p *Promise) getState() PromiseState {
 	return state
 }
 
-// 将 Promise 标记为已完成
 func (p *Promise) resolve(value interface{}, reason error) {
-	p.change(Fulfilled, value, reason)
+	p.settle(Fulfilled, value, reason)
 }
 
-// 将 Promise 标记为已拒绝
 func (p *Promise) reject(value interface{}, reason error) {
-	p.change(Rejected, value, reason)
+	p.settle(Rejected, value, reason)
 }
 
 // NewPromise 使用给定的处理函数创建新的 Promise
@@ -119,6 +135,25 @@ func (p *Promise) Then(successHandler func(interface{}) (interface{}, error), er
 				reject(errorHandler(reason))
 			} else {
 				resolve(successHandler(value))
+			}
+		case Pending:
+			p.mu.Lock()
+			if p.state != Pending {
+				value, reason := p.value, p.reason
+				p.mu.Unlock()
+				if reason != nil {
+					reject(errorHandler(reason))
+				} else {
+					resolve(successHandler(value))
+				}
+			} else {
+				p.subscribers = append(p.subscribers, subscriber{
+					onFulfilled: successHandler,
+					onRejected:  errorHandler,
+					resolve:     resolve,
+					reject:      reject,
+				})
+				p.mu.Unlock()
 			}
 		}
 	})
@@ -167,6 +202,14 @@ func (p *Promise) GetReason() error {
 // 如果任何一个 Promise 被拒绝，结果 Promise 也会被拒绝
 func All(promises ...*Promise) *Promise {
 	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+		filtered := make([]*Promise, 0, len(promises))
+		for _, p := range promises {
+			if p != nil {
+				filtered = append(filtered, p)
+			}
+		}
+		promises = filtered
+
 		if len(promises) == 0 {
 			resolve([]interface{}{}, nil)
 			return
@@ -175,22 +218,30 @@ func All(promises ...*Promise) *Promise {
 		values := make([]interface{}, len(promises))
 		pendingCount := len(promises)
 		isCompleted := false
+		var mu sync.Mutex
 
 		for i, promise := range promises {
 			promise.Then(func(value interface{}) (interface{}, error) {
-				if !isCompleted {
-					values[i] = value
-					pendingCount--
-					if pendingCount == 0 {
-						resolve(values, nil)
-					}
+				mu.Lock()
+				defer mu.Unlock()
+				if isCompleted {
+					return nil, nil
+				}
+				values[i] = value
+				pendingCount--
+				if pendingCount == 0 {
+					isCompleted = true
+					resolve(values, nil)
 				}
 				return nil, nil
 			}, func(reason error) (interface{}, error) {
-				if !isCompleted {
-					isCompleted = true
-					reject(nil, reason)
+				mu.Lock()
+				defer mu.Unlock()
+				if isCompleted {
+					return nil, nil
 				}
+				isCompleted = true
+				reject(nil, reason)
 				return nil, nil
 			})
 		}
@@ -200,6 +251,14 @@ func All(promises ...*Promise) *Promise {
 // AllSettled 等待所有 Promise 完成，无论其状态如何
 func AllSettled(promises ...*Promise) *Promise {
 	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+		filtered := make([]*Promise, 0, len(promises))
+		for _, p := range promises {
+			if p != nil {
+				filtered = append(filtered, p)
+			}
+		}
+		promises = filtered
+
 		if len(promises) == 0 {
 			resolve([]interface{}{}, nil)
 			return
@@ -207,9 +266,12 @@ func AllSettled(promises ...*Promise) *Promise {
 
 		values := make([]interface{}, len(promises))
 		pendingCount := len(promises)
+		var mu sync.Mutex
 
 		for i, promise := range promises {
 			promise.Then(func(value interface{}) (interface{}, error) {
+				mu.Lock()
+				defer mu.Unlock()
 				values[i] = value
 				pendingCount--
 				if pendingCount == 0 {
@@ -217,6 +279,8 @@ func AllSettled(promises ...*Promise) *Promise {
 				}
 				return nil, nil
 			}, func(reason error) (interface{}, error) {
+				mu.Lock()
+				defer mu.Unlock()
 				values[i] = reason
 				pendingCount--
 				if pendingCount == 0 {
@@ -232,6 +296,14 @@ func AllSettled(promises ...*Promise) *Promise {
 // 如果所有 Promise 都被拒绝，返回一个 AggregateError
 func Any(promises ...*Promise) *Promise {
 	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+		filtered := make([]*Promise, 0, len(promises))
+		for _, p := range promises {
+			if p != nil {
+				filtered = append(filtered, p)
+			}
+		}
+		promises = filtered
+
 		if len(promises) == 0 {
 			reject(nil, NewAggregateError(0))
 			return
@@ -240,21 +312,28 @@ func Any(promises ...*Promise) *Promise {
 		errors := NewAggregateError(len(promises))
 		pendingCount := len(promises)
 		isCompleted := false
+		var mu sync.Mutex
 
 		for _, promise := range promises {
 			promise.Then(func(value interface{}) (interface{}, error) {
-				if !isCompleted {
-					isCompleted = true
-					resolve(value, nil)
+				mu.Lock()
+				defer mu.Unlock()
+				if isCompleted {
+					return nil, nil
 				}
+				isCompleted = true
+				resolve(value, nil)
 				return nil, nil
 			}, func(reason error) (interface{}, error) {
-				if !isCompleted {
-					errors.Errors = append(errors.Errors, reason)
-					pendingCount--
-					if pendingCount == 0 {
-						reject(nil, errors)
-					}
+				mu.Lock()
+				defer mu.Unlock()
+				if isCompleted {
+					return nil, nil
+				}
+				errors.Errors = append(errors.Errors, reason)
+				pendingCount--
+				if pendingCount == 0 {
+					reject(nil, errors)
 				}
 				return nil, nil
 			})
@@ -265,24 +344,40 @@ func Any(promises ...*Promise) *Promise {
 // Race 返回一个与第一个完成的 Promise 具有相同状态的 Promise
 func Race(promises ...*Promise) *Promise {
 	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+		filtered := make([]*Promise, 0, len(promises))
+		for _, p := range promises {
+			if p != nil {
+				filtered = append(filtered, p)
+			}
+		}
+		promises = filtered
+
 		if len(promises) == 0 {
 			resolve(nil, nil)
 			return
 		}
 
 		isCompleted := false
+		var mu sync.Mutex
+
 		for _, promise := range promises {
 			promise.Then(func(value interface{}) (interface{}, error) {
-				if !isCompleted {
-					isCompleted = true
-					resolve(value, nil)
+				mu.Lock()
+				defer mu.Unlock()
+				if isCompleted {
+					return nil, nil
 				}
+				isCompleted = true
+				resolve(value, nil)
 				return nil, nil
 			}, func(reason error) (interface{}, error) {
-				if !isCompleted {
-					isCompleted = true
-					reject(nil, reason)
+				mu.Lock()
+				defer mu.Unlock()
+				if isCompleted {
+					return nil, nil
 				}
+				isCompleted = true
+				reject(nil, reason)
 				return nil, nil
 			})
 		}

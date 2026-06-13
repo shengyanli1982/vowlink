@@ -755,3 +755,433 @@ func TestPromise_EmptyArray(t *testing.T) {
 		assert.Equal(t, []interface{}{}, result.value)
 	})
 }
+
+func TestPromise_AsyncThen(t *testing.T) {
+	t.Run("async resolve with Then chain", func(t *testing.T) {
+		done := make(chan struct{})
+		var result string
+		p := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				resolve("async", nil)
+			}()
+		})
+		p.Then(func(value interface{}) (interface{}, error) {
+			result = value.(string) + " done"
+			close(done)
+			return nil, nil
+		}, nil)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for async Then")
+		}
+		assert.Equal(t, "async done", result)
+	})
+
+	t.Run("async reject with Catch chain", func(t *testing.T) {
+		done := make(chan struct{})
+		var errMsg string
+		p := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				reject(nil, errors.New("async error"))
+			}()
+		})
+		p.Catch(func(reason error) (interface{}, error) {
+			errMsg = reason.Error()
+			close(done)
+			return nil, nil
+		})
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for async Catch")
+		}
+		assert.Equal(t, "async error", errMsg)
+	})
+
+	t.Run("multiple Then on pending promise", func(t *testing.T) {
+		done1 := make(chan struct{})
+		done2 := make(chan struct{})
+		var r1, r2 int
+		p := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				resolve(42, nil)
+			}()
+		})
+		p.Then(func(value interface{}) (interface{}, error) {
+			r1 = value.(int) * 2
+			close(done1)
+			return nil, nil
+		}, nil)
+		p.Then(func(value interface{}) (interface{}, error) {
+			r2 = value.(int) * 3
+			close(done2)
+			return nil, nil
+		}, nil)
+		select {
+		case <-done1:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout on done1")
+		}
+		select {
+		case <-done2:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout on done2")
+		}
+		assert.Equal(t, 84, r1)
+		assert.Equal(t, 126, r2)
+	})
+}
+
+func TestPromise_AsyncAll(t *testing.T) {
+	t.Run("async resolve collection with correct order", func(t *testing.T) {
+		done := make(chan struct{})
+		p1 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				resolve("first", nil)
+			}()
+		})
+		p2 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				resolve("second", nil)
+			}()
+		})
+		p3 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				resolve("third", nil)
+			}()
+		})
+		result := All(p1, p2, p3)
+		result.Then(func(value interface{}) (interface{}, error) {
+			close(done)
+			return nil, nil
+		}, nil)
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for All async")
+		}
+		assert.Equal(t, Fulfilled, result.state)
+		values := result.value.([]interface{})
+		assert.Equal(t, 3, len(values))
+		assert.Equal(t, "first", values[0])
+		assert.Equal(t, "second", values[1])
+		assert.Equal(t, "third", values[2])
+	})
+
+	t.Run("one async reject fails All", func(t *testing.T) {
+		done := make(chan struct{})
+		p1 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				resolve("ok", nil)
+			}()
+		})
+		p2 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				reject(nil, errors.New("fast fail"))
+			}()
+		})
+		result := All(p1, p2)
+		result.Then(nil, func(reason error) (interface{}, error) {
+			close(done)
+			return nil, nil
+		})
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for All reject")
+		}
+		assert.Equal(t, Rejected, result.state)
+		assert.Equal(t, "fast fail", result.reason.Error())
+	})
+}
+
+func TestPromise_AsyncRace(t *testing.T) {
+	t.Run("fastest resolve wins", func(t *testing.T) {
+		done := make(chan struct{})
+		p1 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(200 * time.Millisecond)
+				resolve("slow", nil)
+			}()
+		})
+		p2 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(20 * time.Millisecond)
+				resolve("fast", nil)
+			}()
+		})
+		p3 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(300 * time.Millisecond)
+				resolve("slowest", nil)
+			}()
+		})
+		result := Race(p1, p2, p3)
+		result.Then(func(value interface{}) (interface{}, error) {
+			close(done)
+			return nil, nil
+		}, nil)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for Race")
+		}
+		assert.Equal(t, Fulfilled, result.state)
+		assert.Equal(t, "fast", result.value)
+	})
+
+	t.Run("fastest reject wins", func(t *testing.T) {
+		done := make(chan struct{})
+		p1 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(200 * time.Millisecond)
+				resolve("slow", nil)
+			}()
+		})
+		p2 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(20 * time.Millisecond)
+				reject(nil, errors.New("fast error"))
+			}()
+		})
+		result := Race(p1, p2)
+		result.Then(nil, func(reason error) (interface{}, error) {
+			close(done)
+			return nil, nil
+		})
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for Race reject")
+		}
+		assert.Equal(t, Rejected, result.state)
+		assert.Equal(t, "fast error", result.reason.Error())
+	})
+}
+
+func TestPromise_AsyncAny(t *testing.T) {
+	t.Run("first resolve wins among mixed", func(t *testing.T) {
+		done := make(chan struct{})
+		p1 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				reject(nil, errors.New("err1"))
+			}()
+		})
+		p2 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				resolve("winner", nil)
+			}()
+		})
+		p3 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				resolve("loser", nil)
+			}()
+		})
+		result := Any(p1, p2, p3)
+		result.Then(func(value interface{}) (interface{}, error) {
+			close(done)
+			return nil, nil
+		}, nil)
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for Any")
+		}
+		assert.Equal(t, Fulfilled, result.state)
+		assert.Equal(t, "winner", result.value)
+	})
+
+	t.Run("all async reject with AggregateError", func(t *testing.T) {
+		done := make(chan struct{})
+		p1 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				reject(nil, errors.New("async err1"))
+			}()
+		})
+		p2 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				reject(nil, errors.New("async err2"))
+			}()
+		})
+		result := Any(p1, p2)
+		result.Then(nil, func(reason error) (interface{}, error) {
+			close(done)
+			return nil, nil
+		})
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for Any all reject")
+		}
+		assert.Equal(t, Rejected, result.state)
+		aggErr, ok := result.reason.(*AggregateError)
+		assert.True(t, ok)
+		assert.Equal(t, 2, len(aggErr.Errors))
+	})
+}
+
+func TestPromise_AsyncAllSettled(t *testing.T) {
+	t.Run("mixed async resolve and reject", func(t *testing.T) {
+		done := make(chan struct{})
+		p1 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				resolve("a", nil)
+			}()
+		})
+		p2 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				reject(nil, errors.New("err b"))
+			}()
+		})
+		p3 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				resolve("c", nil)
+			}()
+		})
+		result := AllSettled(p1, p2, p3)
+		result.Then(func(value interface{}) (interface{}, error) {
+			close(done)
+			return nil, nil
+		}, nil)
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for AllSettled")
+		}
+		assert.Equal(t, Fulfilled, result.state)
+		values := result.value.([]interface{})
+		assert.Equal(t, 3, len(values))
+		assert.Equal(t, "a", values[0])
+		assert.EqualError(t, errors.New("err b"), values[1].(error).Error())
+		assert.Equal(t, "c", values[2])
+	})
+}
+
+func TestPromise_NilPromise(t *testing.T) {
+	t.Run("All with nil in middle", func(t *testing.T) {
+		p1 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			resolve("a", nil)
+		})
+		p2 := NewPromise(func(resolve, reject func(interface{}, error)) {
+			resolve("b", nil)
+		})
+		result := All(p1, nil, p2)
+		assert.Equal(t, Fulfilled, result.state)
+		values := result.value.([]interface{})
+		assert.Equal(t, 2, len(values))
+		assert.Equal(t, "a", values[0])
+		assert.Equal(t, "b", values[1])
+	})
+
+	t.Run("All with only nil", func(t *testing.T) {
+		result := All(nil)
+		assert.Equal(t, Fulfilled, result.state)
+		assert.Equal(t, []interface{}{}, result.value)
+	})
+
+	t.Run("AllSettled with nil nil", func(t *testing.T) {
+		result := AllSettled(nil, nil)
+		assert.Equal(t, Fulfilled, result.state)
+		assert.Equal(t, []interface{}{}, result.value)
+	})
+
+	t.Run("Any with nil nil", func(t *testing.T) {
+		result := Any(nil, nil)
+		assert.Equal(t, Rejected, result.state)
+		assert.IsType(t, &AggregateError{}, result.reason)
+	})
+
+	t.Run("Race with nil", func(t *testing.T) {
+		result := Race(nil)
+		assert.Equal(t, Fulfilled, result.state)
+		assert.Nil(t, result.value)
+	})
+}
+
+func TestPromise_ConcurrentAll(t *testing.T) {
+	t.Run("large number of concurrent promises", func(t *testing.T) {
+		const n = 1000
+		promises := make([]*Promise, n)
+		var wg sync.WaitGroup
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			idx := i
+			promises[i] = NewPromise(func(resolve, reject func(interface{}, error)) {
+				go func() {
+					defer wg.Done()
+					time.Sleep(time.Duration(idx%10) * time.Millisecond)
+					resolve(idx, nil)
+				}()
+			})
+		}
+		result := All(promises...)
+		done := make(chan struct{})
+		result.Then(func(value interface{}) (interface{}, error) {
+			close(done)
+			return nil, nil
+		}, func(reason error) (interface{}, error) {
+			close(done)
+			return nil, nil
+		})
+		wg.Wait()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for large All")
+		}
+		assert.Equal(t, Fulfilled, result.state)
+		values := result.value.([]interface{})
+		assert.Equal(t, n, len(values))
+		for i := 0; i < n; i++ {
+			assert.Equal(t, i, values[i].(int))
+		}
+	})
+
+	t.Run("concurrent All with mixed timing", func(t *testing.T) {
+		const n = 200
+		promises := make([]*Promise, n)
+		for i := 0; i < n; i++ {
+			idx := i
+			promises[i] = NewPromise(func(resolve, reject func(interface{}, error)) {
+				go func() {
+					time.Sleep(time.Duration(idx%5) * time.Millisecond)
+					if idx%7 == 0 {
+						reject(nil, errors.New("err"))
+					} else {
+						resolve(idx, nil)
+					}
+				}()
+			})
+		}
+		result := All(promises...)
+		done := make(chan struct{})
+		result.Then(func(value interface{}) (interface{}, error) {
+			close(done)
+			return nil, nil
+		}, func(reason error) (interface{}, error) {
+			close(done)
+			return nil, nil
+		})
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for concurrent mixed All")
+		}
+		assert.True(t, result.state == Fulfilled || result.state == Rejected)
+	})
+}
