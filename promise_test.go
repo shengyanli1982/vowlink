@@ -329,7 +329,12 @@ func TestPromise_Any(t *testing.T) {
 		result := Any(p1, p2, p3)
 
 		assert.Equal(t, Rejected, result.state, "Expected state to be Rejected")
-		assert.Equal(t, &AggregateError{Errors: []error{errors.New("Promise 1 rejected"), errors.New("Promise 2 rejected"), errors.New("Promise 3 rejected")}}, result.reason, "Expected reason to be an AggregateError")
+		aggErr, ok := result.reason.(*AggregateError)
+		assert.True(t, ok, "Expected reason to be an *AggregateError")
+		assert.Equal(t, 3, len(aggErr.Errors), "Expected 3 errors in AggregateError")
+		assert.Equal(t, "Promise 1 rejected", aggErr.Errors[0].Error())
+		assert.Equal(t, "Promise 2 rejected", aggErr.Errors[1].Error())
+		assert.Equal(t, "Promise 3 rejected", aggErr.Errors[2].Error())
 	})
 }
 
@@ -478,7 +483,7 @@ func TestPromise_MultiCatch(t *testing.T) {
 			return data, nil
 		}, nil)
 
-		assert.Equal(t, "Recovered value", p.GetValue().(string), "Expected value to be 'Recovered value'")
+		assert.Equal(t, "Recovered value", p.GetValue(), "Expected value to be 'Recovered value'")
 		assert.Nil(t, p.GetReason(), "Expected reason to be nil")
 	})
 
@@ -531,7 +536,7 @@ func TestPromise_MultiCatch(t *testing.T) {
 			return data, nil
 		}, nil)
 
-		assert.Equal(t, "Recovered value", p.GetValue().(string), "Expected value to be 'Recovered value'")
+		assert.Equal(t, "Recovered value", p.GetValue(), "Expected value to be 'Recovered value'")
 		assert.Nil(t, p.GetReason(), "Expected reason to be nil")
 	})
 }
@@ -550,7 +555,7 @@ func TestPromise_ResolveWithError(t *testing.T) {
 		return data, nil
 	}, nil)
 
-	assert.Equal(t, "Recovered value", p.GetValue().(string), "Expected value to be 'Recovered value'")
+	assert.Equal(t, "Recovered value", p.GetValue(), "Expected value to be 'Recovered value'")
 	assert.Nil(t, p.GetReason(), "Expected reason to be nil")
 }
 
@@ -580,8 +585,8 @@ func TestPromise_RejectWithNil(t *testing.T) {
 		return fmt.Sprintf("Recovered value: %v", reason.Error()), nil
 	})
 
-	assert.Equal(t, "Something went wrong", p.GetValue().(string), "Expected reason to be 'Something went wrong'")
-	assert.Nil(t, p.GetReason(), "Expected value to be nil")
+	assert.Equal(t, "Recovered value: Handled error", p.GetValue().(string), "Expected value to be 'Recovered value: Handled error'")
+	assert.Nil(t, p.GetReason(), "Expected reason to be nil")
 }
 
 func TestPromise_FinallyWithError(t *testing.T) {
@@ -612,7 +617,7 @@ func TestPromise_FinallyWithError(t *testing.T) {
 			return nil, errors.New("Handled error: " + reason.Error())
 		})
 
-		assert.Equal(t, "Handled error: Finally error", p.GetReason().Error(), "Expected reason to be 'Handled error: Finally error'")
+		assert.Equal(t, "Handled error: Something went wrong\nFinally error", p.GetReason().Error(), "Expected reason to contain both original and cleanup errors")
 		assert.Nil(t, p.GetValue(), "Expected value to be nil")
 	})
 }
@@ -620,7 +625,10 @@ func TestPromise_FinallyWithError(t *testing.T) {
 func TestNewPromise(t *testing.T) {
 	t.Run("nil handler", func(t *testing.T) {
 		p := NewPromise(nil)
-		assert.Nil(t, p, "Expected nil when handler is nil")
+		assert.NotNil(t, p, "Expected rejected Promise when handler is nil")
+		assert.Equal(t, Rejected, p.state, "Expected state to be Rejected")
+		assert.NotNil(t, p.GetReason(), "Expected reason to be non-nil")
+		assert.Equal(t, "promise handler cannot be nil", p.GetReason().Error())
 	})
 
 	t.Run("initial state", func(t *testing.T) {
@@ -1183,5 +1191,560 @@ func TestPromise_ConcurrentAll(t *testing.T) {
 			t.Fatal("timeout waiting for concurrent mixed All")
 		}
 		assert.True(t, result.state == Fulfilled || result.state == Rejected)
+	})
+}
+
+func TestPromise_ExecutorPanic(t *testing.T) {
+	t.Run("executor panic recovers to rejected", func(t *testing.T) {
+		p := NewPromise(func(resolve, reject func(interface{}, error)) {
+			panic("executor boom")
+		})
+		assert.Equal(t, Rejected, p.state)
+		assert.NotNil(t, p.GetReason())
+		assert.Contains(t, p.GetReason().Error(), "promise executor panic")
+		assert.Contains(t, p.GetReason().Error(), "executor boom")
+	})
+
+	t.Run("executor panic does not block Then chain", func(t *testing.T) {
+		p := NewPromise(func(resolve, reject func(interface{}, error)) {
+			panic("executor boom")
+		}).Catch(func(reason error) (interface{}, error) {
+			return "recovered from: " + reason.Error(), nil
+		})
+		assert.Equal(t, Fulfilled, p.state)
+		assert.Contains(t, p.GetValue().(string), "recovered from")
+	})
+}
+
+func TestPromise_SubscriberPanicProtection(t *testing.T) {
+	t.Run("panicking subscriber does not block others", func(t *testing.T) {
+		var asyncResolve func(interface{}, error)
+		p := NewPromise(func(resolve, reject func(interface{}, error)) {
+			asyncResolve = resolve
+		})
+
+		// First subscriber will panic
+		result1 := p.Then(func(value interface{}) (interface{}, error) {
+			panic("subscriber 1 panic")
+		}, nil)
+
+		// Second subscriber should still be called
+		done := make(chan struct{})
+		var result2Value interface{}
+		_ = p.Then(func(value interface{}) (interface{}, error) {
+			result2Value = value
+			close(done)
+			return value, nil
+		}, nil)
+
+		// Resolve the promise
+		asyncResolve("hello", nil)
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout: second subscriber was never called")
+		}
+
+		// result1's downstream should be rejected due to panic
+		assert.Equal(t, Rejected, result1.state)
+		assert.NotNil(t, result1.GetReason())
+		assert.Contains(t, result1.GetReason().Error(), "subscriber callback panic")
+
+		// result2's value should be set normally
+		assert.Equal(t, "hello", result2Value)
+	})
+}
+
+func TestPromise_SettlePanicProtection(t *testing.T) {
+	t.Run("multiple subscribers with mixed panic - first two panic, third succeeds (fulfilled)", func(t *testing.T) {
+		var asyncResolve func(interface{}, error)
+		p := NewPromise(func(resolve, reject func(interface{}, error)) {
+			asyncResolve = resolve
+		})
+
+		// First subscriber panics
+		result1 := p.Then(func(value interface{}) (interface{}, error) {
+			panic("subscriber 1 boom")
+		}, nil)
+
+		// Second subscriber panics
+		result2 := p.Then(func(value interface{}) (interface{}, error) {
+			panic("subscriber 2 boom")
+		}, nil)
+
+		// Third subscriber succeeds
+		done := make(chan struct{})
+		result3 := p.Then(func(value interface{}) (interface{}, error) {
+			close(done)
+			return value, nil
+		}, nil)
+
+		asyncResolve("success", nil)
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout: third subscriber was never called")
+		}
+
+		// result1 downstream: Rejected (panic recovered)
+		assert.Equal(t, Rejected, result1.state)
+		assert.NotNil(t, result1.GetReason())
+		assert.Contains(t, result1.GetReason().Error(), "subscriber callback panic")
+		assert.Contains(t, result1.GetReason().Error(), "subscriber 1 boom")
+
+		// result2 downstream: Rejected (panic recovered)
+		assert.Equal(t, Rejected, result2.state)
+		assert.NotNil(t, result2.GetReason())
+		assert.Contains(t, result2.GetReason().Error(), "subscriber callback panic")
+		assert.Contains(t, result2.GetReason().Error(), "subscriber 2 boom")
+
+		// result3 downstream: Fulfilled with correct value
+		assert.Equal(t, Fulfilled, result3.state)
+		assert.Nil(t, result3.GetReason())
+		assert.Equal(t, "success", result3.GetValue())
+	})
+
+	t.Run("single panicking subscriber in rejected path does not block others", func(t *testing.T) {
+		var asyncReject func(interface{}, error)
+		p := NewPromise(func(resolve, reject func(interface{}, error)) {
+			asyncReject = reject
+		})
+
+		// First subscriber panics
+		result1 := p.Then(nil, func(reason error) (interface{}, error) {
+			panic("reject handler panic")
+		})
+
+		// Second subscriber handles rejection normally
+		done := make(chan struct{})
+		result2 := p.Then(nil, func(reason error) (interface{}, error) {
+			close(done)
+			return nil, errors.New("handled: " + reason.Error())
+		})
+
+		asyncReject(nil, errors.New("original rejection"))
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout: second subscriber was never called")
+		}
+
+		// result1 downstream: Rejected (panic recovered)
+		assert.Equal(t, Rejected, result1.state)
+		assert.NotNil(t, result1.GetReason())
+		assert.Contains(t, result1.GetReason().Error(), "subscriber callback panic")
+		assert.Contains(t, result1.GetReason().Error(), "reject handler panic")
+
+		// result2 downstream: Rejected with handled error
+		assert.Equal(t, Rejected, result2.state)
+		assert.NotNil(t, result2.GetReason())
+		assert.Equal(t, "handled: original rejection", result2.GetReason().Error())
+	})
+}
+
+func TestAggregateError_NilError(t *testing.T) {
+	t.Run("nil errors rendered as <nil>", func(t *testing.T) {
+		ae := &AggregateError{
+			Errors: []error{errors.New("err1"), nil, errors.New("err2")},
+		}
+		assert.Equal(t, "All promises were rejected: err1, <nil>, err2", ae.Error())
+	})
+}
+// ---------- Round 3: 新增边界场景测试 ----------
+
+// TestPromise_MultiSubscriberPanicLifecycle
+// 场景: 一个 Promise 有 5 个 Then subscriber，其中第 1、3、5 个 subscriber 回调 panic，第 2、4 个正常。
+// 验证:
+//   - 第 1、3、5 个下游 Promise 状态为 Rejected，reason 包含 "subscriber callback panic"
+//   - 第 2、4 个下游 Promise 状态为 Fulfilled，值正确传递
+//   - 验证所有 subscriber 都被调用了（不会因为前面的 panic 而遗漏）
+func TestPromise_MultiSubscriberPanicLifecycle(t *testing.T) {
+	t.Run("mixed panic and normal subscribers", func(t *testing.T) {
+		// Arrange: 创建 Pending 状态的 Promise，保留 resolve 引用用于手动触发
+		var asyncResolve func(interface{}, error)
+		source := NewPromise(func(resolve, reject func(interface{}, error)) {
+			asyncResolve = resolve
+		})
+
+		// 用 channel 追踪每个 subscriber 是否被调用
+		const n = 5
+		called := make([]chan struct{}, n)
+		for i := 0; i < n; i++ {
+			called[i] = make(chan struct{})
+		}
+
+		// 5 个下游 Promise — 注意必须用局部变量捕获索引，避免闭包共享同一变量
+		downstream := make([]*Promise, n)
+
+		// subscriber #1: panic
+		func() {
+			idx := 0
+			downstream[idx] = source.Then(func(value interface{}) (interface{}, error) {
+				close(called[idx])
+				panic("boom from subscriber 1")
+			}, nil)
+		}()
+
+		// subscriber #2: 正常
+		func() {
+			idx := 1
+			downstream[idx] = source.Then(func(value interface{}) (interface{}, error) {
+				close(called[idx])
+				return fmt.Sprintf("sub2 got %v", value), nil
+			}, nil)
+		}()
+
+		// subscriber #3: panic
+		func() {
+			idx := 2
+			downstream[idx] = source.Then(func(value interface{}) (interface{}, error) {
+				close(called[idx])
+				panic("boom from subscriber 3")
+			}, nil)
+		}()
+
+		// subscriber #4: 正常
+		func() {
+			idx := 3
+			downstream[idx] = source.Then(func(value interface{}) (interface{}, error) {
+				close(called[idx])
+				return fmt.Sprintf("sub4 got %v", value), nil
+			}, nil)
+		}()
+
+		// subscriber #5: panic
+		func() {
+			idx := 4
+			downstream[idx] = source.Then(func(value interface{}) (interface{}, error) {
+				close(called[idx])
+				panic("boom from subscriber 5")
+			}, nil)
+		}()
+
+		// Act: resolve 源 Promise，触发所有 subscriber
+		asyncResolve("hello", nil)
+
+		// Assert: 验证所有 5 个 subscriber 都被调用
+		for idx := 0; idx < n; idx++ {
+			select {
+			case <-called[idx]:
+				// subscriber idx 被调用了
+			case <-time.After(2 * time.Second):
+				t.Fatalf("timeout: subscriber #%d was never called", idx+1)
+			}
+		}
+
+		// Assert: 第 1、3、5 个下游应为 Rejected，reason 包含 "subscriber callback panic"
+		panicIndices := []int{0, 2, 4}
+		panicMessages := []string{"boom from subscriber 1", "boom from subscriber 3", "boom from subscriber 5"}
+		for j, idx := range panicIndices {
+			assert.Equal(t, Rejected, downstream[idx].getState(),
+				"subscriber #%d downstream should be Rejected", idx+1)
+			assert.NotNil(t, downstream[idx].GetReason(),
+				"subscriber #%d downstream reason should not be nil", idx+1)
+			assert.Contains(t, downstream[idx].GetReason().Error(), "subscriber callback panic",
+				"subscriber #%d reason should contain 'subscriber callback panic'", idx+1)
+			assert.Contains(t, downstream[idx].GetReason().Error(), panicMessages[j],
+				"subscriber #%d reason should contain original panic message", idx+1)
+		}
+
+		// Assert: 第 2、4 个下游应为 Fulfilled，值正确传递
+		normalIndices := []int{1, 3}
+		normalValues := []string{"sub2 got hello", "sub4 got hello"}
+		for j, idx := range normalIndices {
+			assert.Equal(t, Fulfilled, downstream[idx].getState(),
+				"subscriber #%d downstream should be Fulfilled", idx+1)
+			assert.Nil(t, downstream[idx].GetReason(),
+				"subscriber #%d downstream reason should be nil", idx+1)
+			assert.Equal(t, normalValues[j], downstream[idx].GetValue(),
+				"subscriber #%d downstream value mismatch", idx+1)
+		}
+	})
+}
+
+// TestPromise_DeepChainStackSafety
+// 场景: 创建 5000 层同步 Then 链（每个 Promise 已在 executor 中 resolve）。
+// 验证:
+//   - 不会 panic / 栈溢出
+//   - 最终值正确传递
+func TestPromise_DeepChainStackSafety(t *testing.T) {
+	t.Run("5000 layer synchronous Then chain", func(t *testing.T) {
+		// Arrange: 起始值 = 1
+		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			resolve(1, nil)
+		})
+
+		// Act: 5000 层同步 Then 链，每层将值 +1
+		const layers = 5000
+		assert.NotPanics(t, func() {
+			for i := 0; i < layers; i++ {
+				p = p.Then(func(value interface{}) (interface{}, error) {
+					return value.(int) + 1, nil
+				}, nil)
+			}
+		}, "building 5000-layer Then chain should not panic")
+
+		// Assert: 最终值 = 1 + 5000 = 5001
+		assert.Equal(t, Fulfilled, p.getState(),
+			"final Promise should be Fulfilled after 5000 layers")
+		assert.Equal(t, 5001, p.GetValue(),
+			"final value should be 5001 (1 initial + 5000 increments)")
+		assert.Nil(t, p.GetReason(),
+			"final Promise should have no rejection reason")
+	})
+
+	t.Run("5000 layer synchronous Then chain with rejection propagation", func(t *testing.T) {
+		// 额外验证: 深层链中间某层 reject 后，后续层不再执行 onSuccess
+		p := NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+			resolve(1, nil)
+		})
+
+		const rejectAt = 2500
+		successCallCount := 0
+
+		assert.NotPanics(t, func() {
+			for i := 0; i < 5000; i++ {
+				layer := i
+				p = p.Then(func(value interface{}) (interface{}, error) {
+					successCallCount++
+					if layer == rejectAt {
+						return nil, errors.New("mid-chain rejection")
+					}
+					return value.(int) + 1, nil
+				}, nil)
+			}
+		}, "building deep chain with mid-rejection should not panic")
+
+		// Assert: onSuccess 只在层 0~rejectAt 被调用（共 rejectAt+1 次）
+		// rejectAt 层返回 (nil, error) → dispatchCallback 调 reject → 下游 Rejected
+		// rejectAt+1 层开始 state=Rejected，走 defaultErrorHandler(nil, reason) → 继续 reject 传播
+		// 所以 successCallCount 应恰好等于 rejectAt+1
+		assert.Equal(t, rejectAt+1, successCallCount,
+			"success handler should be called exactly rejectAt+1 times (layers 0..%d)", rejectAt)
+
+		// 最终 Promise 应为 Rejected，携带 mid-chain rejection 错误
+		state, _, reason := p.snapshot()
+		assert.Equal(t, Rejected, state,
+			"final Promise should be Rejected after mid-chain error")
+		assert.NotNil(t, reason,
+			"final Promise should carry the rejection reason")
+		assert.Equal(t, "mid-chain rejection", reason.Error())
+	})
+}
+
+// TestPromise_NilPromiseChainCalls
+// 场景: NewPromise(nil) 返回一个 Rejected Promise (Round 1 已修复)，
+//       验证其 Then/Catch/Finally 链式调用正常工作。
+// 验证:
+//   - NewPromise(nil).Then(...) 不 panic
+//   - NewPromise(nil).Catch(...) 可以捕获 "promise handler cannot be nil" 错误
+//   - NewPromise(nil).Finally(...) 正常执行
+//   - 链式调用 NewPromise(nil).Catch(recover).Then(use) 正常工作
+func TestPromise_NilPromiseChainCalls(t *testing.T) {
+	t.Run("Then on nil handler Promise", func(t *testing.T) {
+		// NewPromise(nil) 返回 {state: Rejected, reason: "promise handler cannot be nil"}
+		// .Then(success, error) 在 Rejected 状态下会调用 errorHandler
+		// 因为 errorHandler == nil → 使用 defaultErrorHandler → 直接传递 error → reject
+		nilPromise := NewPromise(nil)
+		assert.Equal(t, Rejected, nilPromise.getState(), "precondition: nil handler Promise should be Rejected")
+
+		// Then with explicit error handler: 捕获 error 并返回恢复值
+		assert.NotPanics(t, func() {
+			result := nilPromise.Then(
+				func(value interface{}) (interface{}, error) {
+					t.Fatal("success handler should not be called on Rejected Promise")
+					return nil, nil
+				},
+				func(reason error) (interface{}, error) {
+					return "recovered via Then: " + reason.Error(), nil
+				},
+			)
+			assert.Equal(t, Fulfilled, result.getState(), "recovered Then result should be Fulfilled")
+			assert.Equal(t, "recovered via Then: promise handler cannot be nil", result.GetValue())
+		}, "Then on nil handler Promise should not panic")
+
+		// Then with nil handlers: defaultErrorHandler 传播 rejection
+		assert.NotPanics(t, func() {
+			result := nilPromise.Then(nil, nil)
+			assert.Equal(t, Rejected, result.getState(),
+				"Then(nil,nil) on Rejected should propagate Rejected")
+			assert.Equal(t, "promise handler cannot be nil", result.GetReason().Error())
+		}, "Then(nil,nil) on nil handler Promise should not panic")
+	})
+
+	t.Run("Catch on nil handler Promise", func(t *testing.T) {
+		nilPromise := NewPromise(nil)
+
+		// Catch 可以捕获 "promise handler cannot be nil"
+		assert.NotPanics(t, func() {
+			result := nilPromise.Catch(func(reason error) (interface{}, error) {
+				return "caught: " + reason.Error(), nil
+			})
+			assert.Equal(t, Fulfilled, result.getState(),
+				"Catch on nil handler Promise should recover to Fulfilled")
+			assert.Equal(t, "caught: promise handler cannot be nil", result.GetValue(),
+				"Catch handler should receive the nil handler error message")
+		}, "Catch on nil handler Promise should not panic")
+
+		// Catch with nil handler: defaultErrorHandler 传播
+		assert.NotPanics(t, func() {
+			result := nilPromise.Catch(nil)
+			assert.Equal(t, Rejected, result.getState(),
+				"Catch(nil) should propagate Rejected state")
+			assert.Equal(t, "promise handler cannot be nil", result.GetReason().Error())
+		}, "Catch(nil) on nil handler Promise should not panic")
+	})
+
+	t.Run("Finally on nil handler Promise", func(t *testing.T) {
+		nilPromise := NewPromise(nil)
+
+		// Finally 应正常执行 cleanup，且不 panic
+		assert.NotPanics(t, func() {
+			finallyCalled := false
+			result := nilPromise.Finally(func() error {
+				finallyCalled = true
+				return nil
+			})
+			assert.Equal(t, Rejected, result.getState(),
+				"Finally on Rejected should remain Rejected (cleanup returns nil)")
+			assert.True(t, finallyCalled, "Finally cleanup should be called on nil handler Promise")
+			assert.Equal(t, "promise handler cannot be nil", result.GetReason().Error(),
+				"Finally should preserve the original rejection reason")
+		}, "Finally on nil handler Promise should not panic")
+
+		// Finally with nil handler
+		assert.NotPanics(t, func() {
+			result := nilPromise.Finally(nil)
+			assert.Equal(t, Rejected, result.getState(),
+				"Finally(nil) on nil handler Promise should remain Rejected")
+		}, "Finally(nil) on nil handler Promise should not panic")
+
+		// Finally with cleanup error: errors.Join(reason, cleanupErr)
+		assert.NotPanics(t, func() {
+			result := nilPromise.Finally(func() error {
+				return errors.New("cleanup failed")
+			})
+			assert.Equal(t, Rejected, result.getState(),
+				"Finally with cleanup error should remain Rejected")
+			assert.NotNil(t, result.GetReason(),
+				"should carry joined error")
+			assert.Contains(t, result.GetReason().Error(), "promise handler cannot be nil",
+				"joined error should contain original reason")
+			assert.Contains(t, result.GetReason().Error(), "cleanup failed",
+				"joined error should contain cleanup error")
+		}, "Finally with cleanup error should not panic")
+	})
+
+	t.Run("full chain on nil handler Promise", func(t *testing.T) {
+		// 完整链: NewPromise(nil).Catch(recover).Finally(log).Then(use)
+		nilPromise := NewPromise(nil)
+
+		assert.NotPanics(t, func() {
+			finallyCalled := false
+
+			result := nilPromise.
+				Catch(func(reason error) (interface{}, error) {
+					// 从 nil handler 错误中恢复
+					return "recovered from nil handler", nil
+				}).
+				Finally(func() error {
+					finallyCalled = true
+					return nil
+				}).
+				Then(func(value interface{}) (interface{}, error) {
+					return value.(string) + " and processed", nil
+				}, nil)
+
+			assert.True(t, finallyCalled, "Finally should be called in the chain")
+			assert.Equal(t, Fulfilled, result.getState(),
+				"full chain result should be Fulfilled")
+			assert.Equal(t, "recovered from nil handler and processed", result.GetValue(),
+				"full chain should pass recovered value through Finally and Then")
+		}, "full Catch→Finally→Then chain on nil handler Promise should not panic")
+
+		// 链式调用不恢复: Catch 再抛出 error
+		assert.NotPanics(t, func() {
+			result := nilPromise.
+				Catch(func(reason error) (interface{}, error) {
+					return nil, errors.New("new error from Catch")
+				}).
+				Finally(func() error {
+					return nil
+				}).
+				Then(func(value interface{}) (interface{}, error) {
+					t.Fatal("success handler should not be called on error propagation path")
+					return nil, nil
+				}, func(reason error) (interface{}, error) {
+					return "handled: " + reason.Error(), nil
+				})
+
+			assert.Equal(t, Fulfilled, result.getState(),
+				"final handler should recover the chain to Fulfilled")
+			assert.Equal(t, "handled: new error from Catch", result.GetValue())
+		}, "Catch→Finally→Then chain with error re-throw should not panic")
+	})
+}
+
+func TestPromise_ThenPendingToSettledRace(t *testing.T) {
+	t.Run("concurrent Then registration and settle", func(t *testing.T) {
+		// Exercise the double-check path in Then() where the promise
+		// transitions from Pending to settled between snapshot() and Lock().
+		const iterations = 200
+		for i := 0; i < iterations; i++ {
+			var asyncResolve func(interface{}, error)
+			p := NewPromise(func(resolve, reject func(interface{}, error)) {
+				asyncResolve = resolve
+			})
+
+			// Use channel to signal completion from Then callback
+			done := make(chan string, 1)
+			p.Then(func(v interface{}) (interface{}, error) {
+				done <- v.(string) + "!"
+				return v, nil
+			}, nil)
+
+			// Resolve almost immediately to create race with Then()
+			asyncResolve("concurrent", nil)
+
+			select {
+			case val := <-done:
+				assert.Equal(t, "concurrent!", val, "iteration %d: expected 'concurrent!'", i)
+			case <-time.After(3 * time.Second):
+				t.Fatalf("timeout on iteration %d", i)
+			}
+		}
+	})
+
+	t.Run("multiple concurrent Then on settling promise", func(t *testing.T) {
+		var asyncResolve func(interface{}, error)
+		p := NewPromise(func(resolve, reject func(interface{}, error)) {
+			asyncResolve = resolve
+		})
+
+		const n = 50
+		done := make(chan string, n)
+
+		for i := 0; i < n; i++ {
+			p.Then(func(v interface{}) (interface{}, error) {
+				done <- v.(string)
+				return v, nil
+			}, nil)
+		}
+
+		// Resolve to trigger all subscribers
+		asyncResolve("broadcast", nil)
+
+		// Collect all results via channel
+		for i := 0; i < n; i++ {
+			select {
+			case val := <-done:
+				assert.Equal(t, "broadcast", val, "subscriber %d should receive 'broadcast'", i)
+			case <-time.After(3 * time.Second):
+				t.Fatalf("timeout waiting for Then subscriber %d", i)
+			}
+		}
 	})
 }
