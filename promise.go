@@ -5,27 +5,32 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // PromiseState 表示 Promise 的状态
 type PromiseState uint8
 
 // Promise 操作的默认处理函数（不可变）
-func defaultSuccessHandler(value interface{}) (interface{}, error) { return value, nil }
-func defaultErrorHandler(err error) (interface{}, error)           { return nil, err }
-func defaultCleanupHandler() error                                 { return nil }
+func defaultSuccessHandler(value any) (any, error) { return value, nil }
+func defaultErrorHandler(err error) (any, error)   { return nil, err }
+func defaultCleanupHandler() error                 { return nil }
 
 // AggregateError 表示错误集合
 type AggregateError struct {
 	Errors []error
-	// 缓存 Error() 的结果，避免每次调用时重新拼接字符串和分配切片
-	cached string
+	// 缓存 Error() 的结果，避免每次调用时重新拼接字符串和分配切片。
+	// 使用 atomic.Pointer 保证并发调用 Error()/InvalidateError() 时
+	// 对缓存的读写不产生数据竞争（竞争下重复构建结果无害）。
+	// 注意：Errors 切片自身的并发修改仍需调用方同步；
+	// 库内部用法（Any）在结算前完成全部写入，结算后只读。
+	cached atomic.Pointer[string]
 }
 
 func (ae *AggregateError) Error() string {
 	// 如果有缓存且 Errors 未变更，直接返回
-	if ae.cached != "" {
-		return ae.cached
+	if cached := ae.cached.Load(); cached != nil {
+		return *cached
 	}
 
 	if len(ae.Errors) == 0 {
@@ -41,13 +46,13 @@ func (ae *AggregateError) Error() string {
 		errStrings = append(errStrings, err.Error())
 	}
 	result := "All promises were rejected: " + strings.Join(errStrings, ", ")
-	ae.cached = result
+	ae.cached.Store(&result)
 	return result
 }
 
 // InvalidateError 清除 Error() 的缓存，应在 Errors 被修改后调用
 func (ae *AggregateError) InvalidateError() {
-	ae.cached = ""
+	ae.cached.Store(nil)
 }
 
 func NewAggregateError(capacity int) *AggregateError {
@@ -79,56 +84,45 @@ func (s PromiseState) String() string {
 
 // subscriber 注册 Pending 状态 Promise 的回调
 type subscriber struct {
-	onFulfilled func(interface{}) (interface{}, error)
-	onRejected  func(error) (interface{}, error)
-	resolve     func(interface{}, error)
-	reject      func(interface{}, error)
+	onFulfilled        func(any) (any, error)
+	onRejected         func(error) (any, error)
+	resolve            func(any, error)
+	reject             func(any, error)
+	onFulfilledIndexed func(int, any) (any, error)
+	onRejectedIndexed  func(int, error) (any, error)
+	index              int
 }
 
 // noopSettle 是一个空操作的决议函数，用作直接 subscriber 的 resolve/reject 占位符。
 // 直接 subscriber 在 onFulfilled/onRejected 回调内部直接处理决议逻辑，
 // 因此 resolve/reject 字段仅为满足 dispatchCallback 的接口要求。
-func noopSettle(interface{}, error) {}
+func noopSettle(any, error) {}
 
 // Promise 表示一个异步操作
 type Promise struct {
 	mu          sync.RWMutex
 	state       PromiseState
-	value       interface{}
+	value       any
 	reason      error
 	subscribers []subscriber
 }
 
-// closurePair 持有预绑定的 resolve/reject 闭包
-// 通过 sync.Pool 复用，避免每次 NewPromise 调用时
-// 因 p.resolve / p.reject 方法值而产生的 2 次堆分配。
-type closurePair struct {
-	target  *Promise
-	resolve func(interface{}, error)
-	reject  func(interface{}, error)
-}
-
-var closurePairPool = sync.Pool{
-	New: func() interface{} {
-		cp := &closurePair{}
-		cp.resolve = func(value interface{}, reason error) {
-			cp.target.settle(Fulfilled, value, reason)
-		}
-		cp.reject = func(value interface{}, reason error) {
-			cp.target.settle(Rejected, value, reason)
-		}
-		return cp
-	},
-}
-
 // dispatchSubscriber 分派单个 subscriber，包含 panic 保护。
 // 提取为命名函数避免在 settle 循环中重复创建闭包。
-func dispatchSubscriber(sub subscriber, state PromiseState, value interface{}, reason error) {
+func dispatchSubscriber(sub *subscriber, state PromiseState, value any, reason error) {
 	defer func() {
 		if r := recover(); r != nil {
 			sub.reject(nil, fmt.Errorf("subscriber callback panic: %v", r))
 		}
 	}()
+	if sub.onFulfilledIndexed != nil {
+		if state == Rejected || reason != nil {
+			sub.onRejectedIndexed(sub.index, reason)
+		} else {
+			sub.onFulfilledIndexed(sub.index, value)
+		}
+		return
+	}
 	dispatchCallback(state, value, reason, sub.onFulfilled, sub.onRejected, sub.resolve, sub.reject)
 }
 
@@ -136,13 +130,13 @@ func dispatchSubscriber(sub subscriber, state PromiseState, value interface{}, r
 // 然后根据处理结果决议下游 Promise。
 // 此函数提取了 settle() 和 Then() 中重复的回调分发逻辑。
 func dispatchCallback(
-	state PromiseState, value interface{}, reason error,
-	onSuccess func(interface{}) (interface{}, error),
-	onError func(error) (interface{}, error),
-	resolve func(interface{}, error),
-	reject func(interface{}, error),
+	state PromiseState, value any, reason error,
+	onSuccess func(any) (any, error),
+	onError func(error) (any, error),
+	resolve func(any, error),
+	reject func(any, error),
 ) {
-	var v interface{}
+	var v any
 	var e error
 
 	if state == Rejected {
@@ -165,14 +159,14 @@ func dispatchCallback(
 // 用于 All/AllSettled 等需要按索引存储结果到共享切片的场景。
 // 包含 panic 保护，直接 subscriber 的 panic 会被吞没（不影响外层 Promise）。
 func dispatchIndexedCallback(
-	index int, state PromiseState, value interface{}, reason error,
-	onFulfilled func(int, interface{}) (interface{}, error),
-	onRejected func(int, error) (interface{}, error),
+	index int, state PromiseState, value any, reason error,
+	onFulfilled func(int, any) (any, error),
+	onRejected func(int, error) (any, error),
 ) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Panic in direct subscriber callback - swallowed to prevent cascade
-			_ = fmt.Errorf("subscriber callback panic: %v", r)
+			_ = r
 		}
 	}()
 	if state == Rejected {
@@ -189,7 +183,7 @@ func dispatchIndexedCallback(
 // 注意：subscriber 回调在调用者的 goroutine 中同步顺序执行。
 // 回调函数中不应包含阻塞操作（如死循环、I/O 等待），否则后续
 // subscriber 将被阻塞。如需异步处理，请在回调中启动 goroutine。
-func (p *Promise) settle(state PromiseState, value interface{}, reason error) {
+func (p *Promise) settle(state PromiseState, value any, reason error) {
 	p.mu.Lock()
 	if p.state != Pending {
 		p.mu.Unlock()
@@ -204,12 +198,12 @@ func (p *Promise) settle(state PromiseState, value interface{}, reason error) {
 	subs := p.subscribers
 	p.subscribers = nil
 	p.mu.Unlock()
-	for _, sub := range subs {
-		dispatchSubscriber(sub, state, value, reason)
+	for i := range subs {
+		dispatchSubscriber(&subs[i], state, value, reason)
 	}
 }
 
-func (p *Promise) snapshot() (PromiseState, interface{}, error) {
+func (p *Promise) snapshot() (PromiseState, any, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -221,14 +215,6 @@ func (p *Promise) getState() PromiseState {
 	return state
 }
 
-func (p *Promise) resolve(value interface{}, reason error) {
-	p.settle(Fulfilled, value, reason)
-}
-
-func (p *Promise) reject(value interface{}, reason error) {
-	p.settle(Rejected, value, reason)
-}
-
 // subscribeDirect 直接在 Promise 上注册 subscriber，不创建中间 Promise。
 // 适用于 All/AllSettled/Any/Race 等内部聚合操作，可避免 .Then() 创建的
 // 中间 Promise 和 executor 闭包的堆分配。
@@ -236,8 +222,8 @@ func (p *Promise) reject(value interface{}, reason error) {
 // 同步路径（Promise 已 settle）：直接分发回调，无额外分配。
 // 异步路径（Promise 仍 Pending）：将回调存入 subscribers 列表，等 settle 时触发。
 func (p *Promise) subscribeDirect(
-	onFulfilled func(interface{}) (interface{}, error),
-	onRejected func(error) (interface{}, error),
+	onFulfilled func(any) (any, error),
+	onRejected func(error) (any, error),
 ) {
 	sub := subscriber{
 		onFulfilled: onFulfilled,
@@ -250,7 +236,7 @@ func (p *Promise) subscribeDirect(
 	if p.state != Pending {
 		s, v, r := p.state, p.value, p.reason
 		p.mu.Unlock()
-		dispatchSubscriber(sub, s, v, r)
+		dispatchSubscriber(&sub, s, v, r)
 		return
 	}
 	p.subscribers = append(p.subscribers, sub)
@@ -262,11 +248,11 @@ func (p *Promise) subscribeDirect(
 // 需要按索引存储结果到共享切片的场景。共享回调在循环外创建，仅分配 2 次。
 //
 // 同步路径：通过 dispatchIndexedCallback 直接调用共享回调（无 per-subscriber 闭包分配）。
-// 异步路径：为每个 subscriber 创建绑定索引的包装闭包（2 allocs/subscriber）。
+// 异步路径：回调与索引直接存入 subscriber 结构（无 per-subscriber 闭包分配）。
 func (p *Promise) subscribeDirectIndexed(
 	index int,
-	onFulfilled func(int, interface{}) (interface{}, error),
-	onRejected func(int, error) (interface{}, error),
+	onFulfilled func(int, any) (any, error),
+	onRejected func(int, error) (any, error),
 ) {
 	p.mu.Lock()
 	if p.state != Pending {
@@ -275,32 +261,27 @@ func (p *Promise) subscribeDirectIndexed(
 		dispatchIndexedCallback(index, s, v, r, onFulfilled, onRejected)
 		return
 	}
-	// 异步路径：为每个 subscriber 创建绑定索引的包装闭包
-	idx := index
 	p.subscribers = append(p.subscribers, subscriber{
-		onFulfilled: func(value interface{}) (interface{}, error) {
-			return onFulfilled(idx, value)
-		},
-		onRejected: func(reason error) (interface{}, error) {
-			return onRejected(idx, reason)
-		},
-		resolve: noopSettle,
-		reject:  noopSettle,
+		onFulfilledIndexed: onFulfilled,
+		onRejectedIndexed:  onRejected,
+		index:              index,
+		resolve:            noopSettle,
+		reject:             noopSettle,
 	})
 	p.mu.Unlock()
 }
 
 // NewPromise 使用给定的处理函数创建新的 Promise
 //
-// 性能优化：
-//   - 使用 closurePair sync.Pool 复用 resolve/reject 闭包，
-//     消除每次调用时方法值（method value）的堆分配。
+// 设计说明：
+//   - resolve/reject 为直接捕获 p 的内联闭包，每次调用产生 2 次
+//     闭包堆分配。这是有意的正确性代价：若复用池化闭包，handler
+//     保留 resolve/reject 引用并在结算后再次调用（合法用法）时，
+//     会决议被重绑定的其他 Promise，造成静默数据损坏。
 //   - 内层 func() 用于 panic recovery，其闭包和 defer 均由编译器
 //     在栈上分配（escape analysis 确认 "func literal does not escape"），
 //     不产生堆分配开销。
-//   - 仅在 Promise 已决议（同步执行路径）时将 closurePair
-//     归还到 Pool；异步路径的 closurePair 由 GC 回收。
-func NewPromise(promiseHandler func(resolve func(interface{}, error), reject func(interface{}, error))) (result *Promise) {
+func NewPromise(promiseHandler func(resolve func(any, error), reject func(any, error))) (result *Promise) {
 	if promiseHandler == nil {
 		return &Promise{
 			state:  Rejected,
@@ -311,10 +292,8 @@ func NewPromise(promiseHandler func(resolve func(interface{}, error), reject fun
 	p := &Promise{state: Pending}
 	result = p
 
-	// 从池中获取预绑定闭包对（首次调用由 Pool.New 分配，
-	// 后续调用从池中复用，无堆分配）
-	cp := closurePairPool.Get().(*closurePair)
-	cp.target = p
+	resolve := func(value any, reason error) { p.settle(Fulfilled, value, reason) }
+	reject := func(value any, reason error) { p.settle(Rejected, value, reason) }
 
 	// 内层 func() + defer 用于隔离 handler panic：
 	// 当 handler panic 时，内层 defer recover 后内层函数正常返回，
@@ -323,18 +302,11 @@ func NewPromise(promiseHandler func(resolve func(interface{}, error), reject fun
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				cp.target.settle(Rejected, nil, fmt.Errorf("promise executor panic: %v", r))
+				p.settle(Rejected, nil, fmt.Errorf("promise executor panic: %v", r))
 			}
 		}()
-		promiseHandler(cp.resolve, cp.reject)
+		promiseHandler(resolve, reject)
 	}()
-
-	// 仅当 Promise 已决议（通常意味着同步执行路径）时
-	// 才将 closurePair 归还到池。对于异步路径（Promise 仍
-	// 为 Pending），cp 仍被外部 goroutine 引用，不可归还。
-	if p.getState() != Pending {
-		closurePairPool.Put(cp)
-	}
 
 	return p
 }
@@ -342,7 +314,7 @@ func NewPromise(promiseHandler func(resolve func(interface{}, error), reject fun
 // Then 在 Promise 满足时调用 successHandler，拒绝时调用 errorHandler。
 // 若 handler 为 nil 则使用默认透传处理。
 // 返回一个新的 Promise，其状态和值由 handler 的返回值决定。
-func (p *Promise) Then(successHandler func(interface{}) (interface{}, error), errorHandler func(error) (interface{}, error)) *Promise {
+func (p *Promise) Then(successHandler func(any) (any, error), errorHandler func(error) (any, error)) *Promise {
 	if successHandler == nil {
 		successHandler = defaultSuccessHandler
 	}
@@ -350,7 +322,7 @@ func (p *Promise) Then(successHandler func(interface{}) (interface{}, error), er
 		errorHandler = defaultErrorHandler
 	}
 
-	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	return NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		state, value, reason := p.snapshot()
 		switch state {
 		case Fulfilled, Rejected:
@@ -375,7 +347,7 @@ func (p *Promise) Then(successHandler func(interface{}) (interface{}, error), er
 }
 
 // Catch 在 Promise 被拒绝时调用 errorHandler，返回可恢复的新 Promise。
-func (p *Promise) Catch(errorHandler func(error) (interface{}, error)) *Promise {
+func (p *Promise) Catch(errorHandler func(error) (any, error)) *Promise {
 	return p.Then(nil, errorHandler)
 }
 
@@ -387,14 +359,14 @@ func (p *Promise) Finally(cleanupHandler func() error) *Promise {
 	}
 
 	return p.Then(
-		func(value interface{}) (interface{}, error) {
+		func(value any) (any, error) {
 			err := cleanupHandler()
 			if err != nil {
 				return nil, err
 			}
 			return value, nil
 		},
-		func(reason error) (interface{}, error) {
+		func(reason error) (any, error) {
 			err := cleanupHandler()
 			if err != nil {
 				return nil, errors.Join(reason, err)
@@ -405,7 +377,7 @@ func (p *Promise) Finally(cleanupHandler func() error) *Promise {
 }
 
 // GetValue 返回 Promise 的满足值。若 Promise 尚未完成则返回 nil（线程安全）。
-func (p *Promise) GetValue() interface{} {
+func (p *Promise) GetValue() any {
 	_, value, _ := p.snapshot()
 	return value
 }
@@ -435,45 +407,34 @@ func countNonNil(promises []*Promise) int {
 //   - 使用 subscribeDirectIndexed 消除中间 Promise 和 executor 闭包分配
 //   - 共享回调在循环外创建，同步路径仅需 2 次闭包分配（vs N×3 次）
 func All(promises ...*Promise) *Promise {
-	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	return NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		count := countNonNil(promises)
 		if count == 0 {
-			resolve([]interface{}{}, nil)
+			resolve([]any{}, nil)
 			return
 		}
 
-		values := make([]interface{}, count)
-		pendingCount := count
-		isCompleted := false
-		var mu sync.Mutex
+		values := make([]any, count)
+		var pending atomic.Int32
+		var rejected atomic.Bool
+		pending.Store(int32(count))
+
+		// 内存序：每个回调先写 values[i]，再对同一原子计数器执行 Add(-1)（release 语义）；
+		// 观察到 Add 返回 0 的操作在顺序一致性总序中位于所有先前 Add 之后（acquire 语义），
+		// 因此可见全部 slot 写入；settle 幂等兜底。
 
 		// 共享回调在循环外创建（仅 2 次闭包分配，vs 循环内 N×2 次）
-		onFulfilled := func(i int, value interface{}) (interface{}, error) {
-			mu.Lock()
-			if isCompleted {
-				mu.Unlock()
-				return nil, nil
-			}
+		onFulfilled := func(i int, value any) (any, error) {
 			values[i] = value
-			pendingCount--
-			if pendingCount == 0 {
-				isCompleted = true
-				mu.Unlock()
+			if pending.Add(-1) == 0 {
 				resolve(values, nil)
-				return nil, nil
 			}
-			mu.Unlock()
 			return nil, nil
 		}
-		onRejected := func(_ int, reason error) (interface{}, error) {
-			mu.Lock()
-			if isCompleted {
-				mu.Unlock()
-				return nil, nil
+		onRejected := func(_ int, reason error) (any, error) {
+			if rejected.CompareAndSwap(false, true) {
+				reject(nil, reason)
 			}
-			isCompleted = true
-			mu.Unlock()
-			reject(nil, reason)
 			return nil, nil
 		}
 
@@ -495,40 +456,34 @@ func All(promises ...*Promise) *Promise {
 //   - 使用 subscribeDirectIndexed 消除中间 Promise 和 executor 闭包分配
 //   - 共享回调在循环外创建，同步路径仅需 2 次闭包分配（vs N×2 次）
 func AllSettled(promises ...*Promise) *Promise {
-	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	return NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		count := countNonNil(promises)
 		if count == 0 {
-			resolve([]interface{}{}, nil)
+			resolve([]any{}, nil)
 			return
 		}
 
-		values := make([]interface{}, count)
-		pendingCount := count
-		var mu sync.Mutex
+		values := make([]any, count)
+		var pending atomic.Int32
+		pending.Store(int32(count))
+
+		// 内存序：每个回调先写 values[i]，再对同一原子计数器执行 Add(-1)（release 语义）；
+		// 观察到 Add 返回 0 的操作在顺序一致性总序中位于所有先前 Add 之后（acquire 语义），
+		// 因此可见全部 slot 写入；settle 幂等兜底。
 
 		// 共享回调在循环外创建（仅 2 次闭包分配）
-		onFulfilled := func(i int, value interface{}) (interface{}, error) {
-			mu.Lock()
+		onFulfilled := func(i int, value any) (any, error) {
 			values[i] = value
-			pendingCount--
-			if pendingCount == 0 {
-				mu.Unlock()
+			if pending.Add(-1) == 0 {
 				resolve(values, nil)
-				return nil, nil
 			}
-			mu.Unlock()
 			return nil, nil
 		}
-		onRejected := func(i int, reason error) (interface{}, error) {
-			mu.Lock()
+		onRejected := func(i int, reason error) (any, error) {
 			values[i] = reason
-			pendingCount--
-			if pendingCount == 0 {
-				mu.Unlock()
+			if pending.Add(-1) == 0 {
 				resolve(values, nil)
-				return nil, nil
 			}
-			mu.Unlock()
 			return nil, nil
 		}
 
@@ -548,10 +503,10 @@ func AllSettled(promises ...*Promise) *Promise {
 //
 // 性能优化：
 //   - 使用 countNonNil 原地遍历，避免 filterNilPromises 的切片分配
-//   - 使用 subscribeDirect 消除中间 Promise 和 executor 闭包分配
-//   - 共享回调在循环外创建（无需索引），同步路径仅需 2 次闭包分配
+//   - 使用 subscribeDirectIndexed 消除中间 Promise 和 executor 闭包分配
+//   - 共享回调在循环外创建，同步路径仅需 2 次闭包分配
 func Any(promises ...*Promise) *Promise {
-	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	return NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		count := countNonNil(promises)
 		if count == 0 {
 			reject(nil, NewAggregateError(0))
@@ -559,44 +514,34 @@ func Any(promises ...*Promise) *Promise {
 		}
 
 		aggErr := NewAggregateError(count)
-		pendingCount := count
-		isCompleted := false
-		var mu sync.Mutex
+		aggErr.Errors = aggErr.Errors[:count]
+		var pending atomic.Int32
+		var done atomic.Bool
+		pending.Store(int32(count))
 
-		// 共享回调在循环外创建（无索引依赖，所有 promise 共享）
-		onFulfilled := func(value interface{}) (interface{}, error) {
-			mu.Lock()
-			if isCompleted {
-				mu.Unlock()
-				return nil, nil
+		// 共享回调在循环外创建（索引经参数传入，所有 promise 共享）
+		onFulfilled := func(_ int, value any) (any, error) {
+			if done.CompareAndSwap(false, true) {
+				resolve(value, nil)
 			}
-			isCompleted = true
-			mu.Unlock()
-			resolve(value, nil)
 			return nil, nil
 		}
-		onRejected := func(reason error) (interface{}, error) {
-			mu.Lock()
-			if isCompleted {
-				mu.Unlock()
-				return nil, nil
-			}
-			aggErr.Errors = append(aggErr.Errors, reason)
-			pendingCount--
-			if pendingCount == 0 {
-				mu.Unlock()
+		onRejected := func(i int, reason error) (any, error) {
+			aggErr.Errors[i] = reason
+			// 不变式：每个输入 Promise 恰好分派一次回调且仅走一个分支，pending.Add(-1)==0 ⟺ 全部输入均走 onRejected（含 resolve(value, err) 转拒分支，该分支同样只递减计数而不触碰 done）⟹ onFulfilled 从未运行 ⟹ done 必为 false，故此 CAS 可证冗余。
+			if pending.Add(-1) == 0 {
 				reject(nil, aggErr)
-				return nil, nil
 			}
-			mu.Unlock()
 			return nil, nil
 		}
 
+		nonNilIdx := 0
 		for _, promise := range promises {
 			if promise == nil {
 				continue
 			}
-			promise.subscribeDirect(onFulfilled, onRejected)
+			promise.subscribeDirectIndexed(nonNilIdx, onFulfilled, onRejected)
+			nonNilIdx++
 		}
 	})
 }
@@ -608,37 +553,26 @@ func Any(promises ...*Promise) *Promise {
 //   - 使用 subscribeDirect 消除中间 Promise 和 executor 闭包分配
 //   - 共享回调在循环外创建（无需索引），同步路径仅需 2 次闭包分配
 func Race(promises ...*Promise) *Promise {
-	return NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	return NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		count := countNonNil(promises)
 		if count == 0 {
 			resolve(nil, nil)
 			return
 		}
 
-		isCompleted := false
-		var mu sync.Mutex
+		var done atomic.Bool
 
 		// 共享回调在循环外创建（无索引依赖，所有 promise 共享）
-		onFulfilled := func(value interface{}) (interface{}, error) {
-			mu.Lock()
-			if isCompleted {
-				mu.Unlock()
-				return nil, nil
+		onFulfilled := func(value any) (any, error) {
+			if done.CompareAndSwap(false, true) {
+				resolve(value, nil)
 			}
-			isCompleted = true
-			mu.Unlock()
-			resolve(value, nil)
 			return nil, nil
 		}
-		onRejected := func(reason error) (interface{}, error) {
-			mu.Lock()
-			if isCompleted {
-				mu.Unlock()
-				return nil, nil
+		onRejected := func(reason error) (any, error) {
+			if done.CompareAndSwap(false, true) {
+				reject(nil, reason)
 			}
-			isCompleted = true
-			mu.Unlock()
-			reject(nil, reason)
 			return nil, nil
 		}
 

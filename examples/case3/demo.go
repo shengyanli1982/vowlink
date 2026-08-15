@@ -13,13 +13,13 @@ func main() {
 	fmt.Println("========== finally 1 successfully ==========")
 
 	// vowlink 像一个链条，你可以在链条上添加更多的 then() 来在 promise 解析后做更多的事情。
-	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	result := vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 这个 promise 直接解析为 "hello world"
 		resolve("hello world", nil)
-	}).Then(func(value interface{}) (interface{}, error) {
+	}).Then(func(value any) (any, error) {
 		// 在 Then 方法中，我们将解析的值加上 " vowlink !!"
 		return value.(string) + " vowlink !!", nil
-	}, nil).Catch(func(err error) (interface{}, error) {
+	}, nil).Catch(func(err error) (any, error) {
 		// 如果 promise 被拒绝，我们将返回一个新的错误信息 "rejected."
 		return nil, fmt.Errorf("rejected.")
 	}).Finally(func() error {
@@ -37,13 +37,13 @@ func main() {
 	// 输出 "========== finally 1 error ==========" 到控制台
 	fmt.Println("========== finally 1 error ==========")
 
-	result = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	result = vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 这个 promise 直接解析为 "hello world"
 		resolve("hello world", nil)
-	}).Then(func(value interface{}) (interface{}, error) {
+	}).Then(func(value any) (any, error) {
 		// 在 Then 方法中，我们将解析的值加上 " vowlink !!"
 		return value.(string) + " vowlink !!", nil
-	}, nil).Catch(func(err error) (interface{}, error) {
+	}, nil).Catch(func(err error) (any, error) {
 		// 如果 promise 被拒绝，我们将返回一个新的错误信息 "rejected."
 		return nil, fmt.Errorf("rejected.")
 	}).Finally(func() error {
@@ -52,12 +52,12 @@ func main() {
 
 		// 返回一个新的错误 "error in finally 1"
 		return errors.New("error in finally 1")
-	}).Then(func(data interface{}) (interface{}, error) {
+	}).Then(func(data any) (any, error) {
 		// 当 Promise 被解决时，会执行这个 Then 函数
 
 		// 返回解决的值，将会被下一个 Then 函数接收
 		return data.(string) + " vowlink", nil
-	}, func(reason error) (interface{}, error) {
+	}, func(reason error) (any, error) {
 		// 当 Promise 被拒绝时，会执行这个 Catch 函数
 
 		// 返回一个新的错误 "Handled error: " 加上原因的错误信息
@@ -72,13 +72,13 @@ func main() {
 	fmt.Println("========== finally 2 successfully ==========")
 
 	// 这是一个被拒绝的 promise
-	result = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	result = vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 这个 promise 被拒绝，原因是 "error"
 		reject(nil, fmt.Errorf("error"))
-	}).Then(func(value interface{}) (interface{}, error) {
+	}).Then(func(value any) (any, error) {
 		// 如果 promise 被解析，我们将解析的值加上 " vowlink !!"
 		return value.(string) + " vowlink !!", nil
-	}, nil).Catch(func(err error) (interface{}, error) {
+	}, nil).Catch(func(err error) (any, error) {
 		// 如果 promise 被拒绝，我们将返回一个新的错误信息 "rejected."
 		return nil, fmt.Errorf("rejected.")
 	}).Finally(func() error {
@@ -97,13 +97,13 @@ func main() {
 	fmt.Println("========== finally 2 error ==========")
 
 	// 这是一个被拒绝的 promise，Finally 方法中返回了一个错误信息
-	result = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	result = vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 这个 promise 被拒绝，原因是 "error"
 		reject(nil, fmt.Errorf("error"))
-	}).Then(func(value interface{}) (interface{}, error) {
+	}).Then(func(value any) (any, error) {
 		// 如果 promise 被解析，我们将解析的值加上 " vowlink !!"
 		return value.(string) + " vowlink !!", nil
-	}, nil).Catch(func(err error) (interface{}, error) {
+	}, nil).Catch(func(err error) (any, error) {
 		// 如果 promise 被拒绝，我们将返回一个新的错误信息 "rejected."
 		return nil, fmt.Errorf("rejected.")
 	}).Finally(func() error {
@@ -115,12 +115,12 @@ func main() {
 		// 返回一个新的错误 "error in finally 2"
 		return errors.New("error in finally 2")
 
-	}).Then(func(data interface{}) (interface{}, error) {
+	}).Then(func(data any) (any, error) {
 		// 当 Promise 被解决时，会执行这个 Then 函数
 
 		// 返回解决的值，将会被下一个 Then 函数接收
 		return data.(string) + " vowlink", nil
-	}, func(reason error) (interface{}, error) {
+	}, func(reason error) (any, error) {
 		// 当 Promise 被拒绝时，会执行这个 Catch 函数
 
 		// 返回一个新的错误 "Handled error: " 加上原因的错误信息

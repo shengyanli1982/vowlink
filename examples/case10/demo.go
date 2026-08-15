@@ -10,39 +10,39 @@ import (
 func main() {
 
 	// 创建一个新的 Promise
-	result := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	result := vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 这个 Promise 会立即被拒绝，原因是 "rejected.100"
 		reject(nil, fmt.Errorf("rejected.100"))
 
-	}).Catch(func(err error) (interface{}, error) {
+	}).Catch(func(err error) (any, error) {
 		// 当 Promise 被拒绝时，会执行这个 Catch 函数
 		fmt.Println("> catch 1")
 
 		// 返回一个新的错误，将会被下一个 Catch 函数接收
 		return nil, err
 
-	}).Catch(func(err error) (interface{}, error) {
+	}).Catch(func(err error) (any, error) {
 		// 当上一个 Catch 函数返回错误时，会执行这个 Catch 函数
 		fmt.Println("> catch 2")
 
 		// 返回一个新的值，将会被下一个 Then 函数接收
 		return "[error handled]", nil
 
-	}).Catch(func(err error) (interface{}, error) {
+	}).Catch(func(err error) (any, error) {
 		// 当上一个 Catch 函数返回错误时，会执行这个 Catch 函数
 		fmt.Println("> catch 3")
 
 		// 返回一个新的错误，将会被下一个 Catch 函数接收
 		return nil, errors.New("rejected.200")
 
-	}).Then(func(value interface{}) (interface{}, error) {
+	}).Then(func(value any) (any, error) {
 		// 当 Promise 被解决时，会执行这个 Then 函数
 		fmt.Println("> then 1")
 
 		// 返回一个新的值，将会被下一个 Then 函数接收
 		return fmt.Sprintf("Should be here. recover value: %v", value), nil
 
-	}, func(err error) (interface{}, error) {
+	}, func(err error) (any, error) {
 		// 当 Promise 被拒绝时，会执行这个 Catch 函数
 		fmt.Println("> catch 4")
 

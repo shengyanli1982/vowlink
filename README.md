@@ -15,7 +15,7 @@ A lightweight Promise library for Go, inspired by the JavaScript Promise API. Vo
 - **Zero dependencies** — standard library only
 - **Thread-safe** — `sync.RWMutex` protects all state transitions
 - **Immutable state** — once settled (`Fulfilled` / `Rejected`), state never changes
-- **High performance** — `sync.Pool`-based closure reuse, O(1) allocations for collection combinators
+- **High performance** — lock-free atomic dispatch in collection combinators, constant per-link allocations in chained APIs
 
 **Requires Go 1.23+.**
 
@@ -30,9 +30,9 @@ go get github.com/shengyanli1982/vowlink
 ```go
 import vl "github.com/shengyanli1982/vowlink"
 
-result := vl.NewPromise(func(resolve, reject func(interface{}, error)) {
+result := vl.NewPromise(func(resolve, reject func(any, error)) {
     resolve("hello", nil)
-}).Then(func(v interface{}) (interface{}, error) {
+}).Then(func(v any) (any, error) {
     return v.(string) + " vowlink", nil
 }, nil)
 
@@ -60,8 +60,8 @@ Every Promise starts as `Pending` and transitions to exactly one terminal state.
 All handlers follow a unified signature for maximum flexibility:
 
 ```go
-func onFulfilled(value interface{}) (interface{}, error)
-func onRejected(reason error) (interface{}, error)
+func onFulfilled(value any) (any, error)
+func onRejected(reason error) (any, error)
 ```
 
 - Return `(value, nil)` → downstream **Fulfills** with `value`
@@ -78,6 +78,8 @@ Both `resolve` and `reject` accept `(value, error)`. The dispatch logic determin
 | `resolve(value, err)` | Fulfills; `Then` calls `onRejected` (error takes priority) |
 | `reject(nil, err)`    | Rejects; `Then` calls `onRejected`                         |
 
+Inside combinators, `resolve(value, err)` is treated as a rejection: `All`/`Race` reject with `err`, `AllSettled` stores `err` in its result slice, and `Any` records `err` in the `AggregateError`. As in `Then`, the error takes priority and `value` is discarded.
+
 ## API Reference
 
 ### Instance Methods
@@ -87,28 +89,30 @@ Both `resolve` and `reject` accept `(value, error)`. The dispatch logic determin
 | `Then(onFulfilled, onRejected)` | Register callbacks; returns new Promise. Either handler may be `nil` |
 | `Catch(onRejected)`             | Shorthand for `Then(nil, onRejected)`                                |
 | `Finally(cleanup)`              | Always runs cleanup handler; returning `error` rejects downstream    |
-| `GetValue() interface{}`        | Returns resolved value, or `nil` if not yet fulfilled                |
+| `GetValue() any`        | Returns resolved value, or `nil` if not yet fulfilled                |
 | `GetReason() error`             | Returns rejection reason, or `nil` if not rejected                   |
 
 ### Combinators
 
 | Function                  | Settles When                   | Result                                    |
 | ------------------------- | ------------------------------ | ----------------------------------------- |
-| `All(p1, p2, ...)`        | All fulfill OR first rejects   | `[]interface{}` of values, or first error |
+| `All(p1, p2, ...)`        | All fulfill OR first rejects   | `[]any` of values, or first error |
 | `Race(p1, p2, ...)`       | First settles (any state)      | Value/error of the winner                 |
 | `Any(p1, p2, ...)`        | First fulfills OR all reject   | First value, or `*AggregateError`         |
-| `AllSettled(p1, p2, ...)` | All settle (fulfill or reject) | `[]interface{}` mixing values and errors  |
+| `AllSettled(p1, p2, ...)` | All settle (fulfill or reject) | `[]any` mixing values and errors  |
+
+**Empty input:** `Race()` fulfills immediately with `nil` — a deliberate design choice, unlike JavaScript where an empty race stays pending forever. `Any()` rejects with an empty `*AggregateError`.
 
 ## Usage Examples
 
 ### Chain & Error Handling
 
 ```go
-result := vl.NewPromise(func(resolve, reject func(interface{}, error)) {
+result := vl.NewPromise(func(resolve, reject func(any, error)) {
     reject(nil, fmt.Errorf("network timeout"))
-}).Then(func(v interface{}) (interface{}, error) {
+}).Then(func(v any) (any, error) {
     return v, nil // skipped on rejection
-}, nil).Catch(func(err error) (interface{}, error) {
+}, nil).Catch(func(err error) (any, error) {
     return nil, fmt.Errorf("wrapped: %w", err)
 })
 
@@ -120,11 +124,11 @@ fmt.Println(result.GetReason()) // wrapped: network timeout
 Returning a value with `nil` error in `Catch` **recovers** the chain:
 
 ```go
-result := vl.NewPromise(func(resolve, reject func(interface{}, error)) {
+result := vl.NewPromise(func(resolve, reject func(any, error)) {
     reject(nil, fmt.Errorf("disk full"))
-}).Catch(func(err error) (interface{}, error) {
+}).Catch(func(err error) (any, error) {
     return "fallback data", nil // recover: chain becomes Fulfilled
-}).Then(func(v interface{}) (interface{}, error) {
+}).Then(func(v any) (any, error) {
     return fmt.Sprintf("got: %v", v), nil
 }, nil)
 
@@ -136,12 +140,12 @@ fmt.Println(result.GetValue()) // got: fallback data
 `Finally` runs regardless of state. If the cleanup handler returns an error, downstream rejects:
 
 ```go
-vl.NewPromise(func(resolve, reject func(interface{}, error)) {
+vl.NewPromise(func(resolve, reject func(any, error)) {
     resolve("data", nil)
 }).Finally(func() error {
     fmt.Println("cleanup done") // always prints
     return nil
-}).Then(func(v interface{}) (interface{}, error) {
+}).Then(func(v any) (any, error) {
     fmt.Println(v) // data
     return v, nil
 }, nil)
@@ -152,14 +156,14 @@ vl.NewPromise(func(resolve, reject func(interface{}, error)) {
 Use goroutines inside the executor for async work. VowLink dispatches subscribers when settled:
 
 ```go
-p := vl.NewPromise(func(resolve, reject func(interface{}, error)) {
+p := vl.NewPromise(func(resolve, reject func(any, error)) {
     go func() {
         time.Sleep(100 * time.Millisecond)
         resolve("async result", nil)
     }()
 })
 
-p.Then(func(v interface{}) (interface{}, error) {
+p.Then(func(v any) (any, error) {
     fmt.Println(v) // async result (called when settled)
     return v, nil
 }, nil)
@@ -168,12 +172,12 @@ p.Then(func(v interface{}) (interface{}, error) {
 ### Collection Combinators
 
 ```go
-p1 := vl.NewPromise(func(r, _ func(interface{}, error)) { r("A", nil) })
-p2 := vl.NewPromise(func(r, _ func(interface{}, error)) { r("B", nil) })
-p3 := vl.NewPromise(func(r, _ func(interface{}, error)) { r("C", nil) })
+p1 := vl.NewPromise(func(r, _ func(any, error)) { r("A", nil) })
+p2 := vl.NewPromise(func(r, _ func(any, error)) { r("B", nil) })
+p3 := vl.NewPromise(func(r, _ func(any, error)) { r("C", nil) })
 
 // All: collect results in order
-values := vl.All(p1, p2, p3).GetValue().([]interface{})
+values := vl.All(p1, p2, p3).GetValue().([]any)
 // [A B C]
 
 // Race: first settled wins
@@ -184,7 +188,7 @@ winner := vl.Race(p1, p2, p3).GetValue()
 result := vl.Any(p1, p2, p3)
 
 // AllSettled: wait for all, collect values and errors
-mixed := vl.AllSettled(p1, p2, p3).GetValue().([]interface{})
+mixed := vl.AllSettled(p1, p2, p3).GetValue().([]any)
 ```
 
 ## Concurrency
@@ -196,17 +200,26 @@ VowLink is designed for concurrent use. Multiple goroutines can safely call `res
 - Subscriber callbacks in `Then`/`Catch`/`Finally` execute **synchronously** on the caller's goroutine
 - Do not block inside callbacks — spawn a goroutine if you need async work
 - `GetValue()` and `GetReason()` are safe to call from any goroutine at any time
+- **Early-settle retention** — after `All`/`Any`/`Race` settles early, subscribers on the remaining pending inputs stay attached until each input settles (no unsubscription, matching JavaScript semantics)
+- **Settle cascade depth** — callbacks run synchronously on the settling goroutine, so settling a pending `Then` chain recurses to a depth equal to the chain length; Go's growable stacks support real-world depths (tests cover 10000 links), but consider splitting extremely deep chains or dispatching them asynchronously
 
 ## Benchmarks
 
 ```
-$ go test -bench=. -benchmem -count=1
-BenchmarkPromiseThenChain/chain=1       2 allocs/op    192 B/op
-BenchmarkPromiseThenChain/chain=32     33 allocs/op   3.1 KB/op
-BenchmarkPromiseAll/size=128            7 allocs/op   2.5 KB/op
-BenchmarkPromiseRace/size=128           4 allocs/op   0.4 KB/op
-BenchmarkAggregateError/size=64         0 allocs/op      0 B/op
+$ go test -bench=. -benchmem -count=5
+BenchmarkPromiseThenChain/chain=1          6 allocs/op    256 B/op
+BenchmarkPromiseThenChain/chain=32        99 allocs/op   4.1 KB/op
+BenchmarkPromiseFinally                    8 allocs/op    288 B/op
+BenchmarkPromiseAll/size=128               8 allocs/op   2.5 KB/op
+BenchmarkPromiseAllSettled/size=128        8 allocs/op   2.5 KB/op
+BenchmarkPromiseAny/first-fulfilled        8 allocs/op   0.7 KB/op
+BenchmarkPromiseRace/size=128              6 allocs/op   0.2 KB/op
+BenchmarkAggregateError/cached/size=64     0 allocs/op      0 B/op
+BenchmarkPromiseThenPending                7 allocs/op    320 B/op
+BenchmarkPromiseAllPending/size=128      522 allocs/op  28.7 KB/op
 ```
+
+NewPromise deliberately spends 2 closure allocations per call for correctness, preventing cross-Promise contamination from pooled closures; the collection combinators are lock-free atomic, and AllPending measures the async subscription path.
 
 ## Examples
 
