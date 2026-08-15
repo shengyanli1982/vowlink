@@ -9,26 +9,26 @@ import (
 
 func main() {
 	// 创建 3 个 promise
-	p1 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	p1 := vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 第一个 promise 直接解析为 "Promise"
 		resolve("Promise", nil)
-	}).Then(func(value interface{}) (interface{}, error) {
+	}).Then(func(value any) (any, error) {
 		// 在 Then 方法中，将解析的值加上 " 1"
 		return value.(string) + " 1", nil
 	}, nil)
 
-	p2 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	p2 := vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 第二个 promise 直接解析为 "Promise"
 		resolve("Promise", nil)
-	}).Then(func(value interface{}) (interface{}, error) {
+	}).Then(func(value any) (any, error) {
 		// 在 Then 方法中，将解析的值加上 " 2"
 		return value.(string) + " 2", nil
 	}, nil)
 
-	p3 := vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	p3 := vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 第三个 promise 直接解析为 "Promise"
 		resolve("Promise", nil)
-	}).Then(func(value interface{}) (interface{}, error) {
+	}).Then(func(value any) (any, error) {
 		// 在 Then 方法中，将解析的值加上 " 3"
 		return value.(string) + " 3", nil
 	}, nil)
@@ -40,17 +40,17 @@ func main() {
 	fmt.Println(">>", result.GetValue().(string))
 
 	// 创建 3 个 promise
-	p1 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	p1 = vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 第一个 promise 被拒绝，原因是 "Promise 1 rejected"
 		reject(nil, errors.New("Promise 1 rejected"))
 	})
 
-	p2 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	p2 = vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 第二个 promise 被拒绝，原因是 "Promise 2 rejected"
 		reject(nil, errors.New("Promise 2 rejected"))
 	})
 
-	p3 = vl.NewPromise(func(resolve func(interface{}, error), reject func(interface{}, error)) {
+	p3 = vl.NewPromise(func(resolve func(any, error), reject func(any, error)) {
 		// 第三个 promise 被拒绝，原因是 "Promise 3 rejected"
 		reject(nil, errors.New("Promise 3 rejected"))
 	})
