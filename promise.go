@@ -55,6 +55,9 @@ func (ae *AggregateError) InvalidateError() {
 	ae.cached.Store(nil)
 }
 
+// Unwrap 返回成员错误列表，使 errors.Is/As 可遍历成员错误（Go 1.20+ 多错误惯例）。
+func (ae *AggregateError) Unwrap() []error { return ae.Errors }
+
 func NewAggregateError(capacity int) *AggregateError {
 	return &AggregateError{
 		Errors: make([]error, 0, capacity),
@@ -100,8 +103,16 @@ func noopSettle(any, error) {}
 
 // Promise 表示一个异步操作
 type Promise struct {
-	mu          sync.RWMutex
-	state       PromiseState
+	mu    sync.RWMutex
+	state PromiseState
+	// settled 为已结算探测标志（免锁快路径专用）。settle 锁内对其 Store(true)
+	// 发生在 state/value/reason 三字段写之后（release 语义）：Load()==true 时
+	// 三字段已不可变（settle 首决幂等）且对本 goroutine 可见，允许免锁读取。
+	// 紧邻 state 放置以复用 8 字节对齐间隙，不增加结构体尺寸（仍为 88B，64 位平台实测）。
+	// settle 后不得再写 state/value/reason（即使持锁）——免锁快路径读者不受锁
+	// 保护；Store(true) 不得移至三字段写之前。所有出生即结算（不经 settle）的
+	// 构造路径必须同步置位 settled。
+	settled     atomic.Bool
 	value       any
 	reason      error
 	subscribers []subscriber
@@ -195,6 +206,9 @@ func (p *Promise) settle(state PromiseState, value any, reason error) {
 	p.state = state
 	p.value = value
 	p.reason = reason
+	// release：上方三字段写（程序序在前）happens-before 本次 Store；
+	// 观察到 settled==true 的免锁读者必能看到不可变的 state/value/reason。
+	p.settled.Store(true)
 	subs := p.subscribers
 	p.subscribers = nil
 	p.mu.Unlock()
@@ -232,6 +246,13 @@ func (p *Promise) subscribeDirect(
 		reject:      noopSettle,
 	}
 
+	// 快路径：settled（acquire 探测）为 true 时 state/value/reason 已不可变且可见，
+	// 免锁直接分发；为 false 走原写锁路径（settle 竞态由锁内检查兜底）。
+	if p.settled.Load() {
+		dispatchSubscriber(&sub, p.state, p.value, p.reason)
+		return
+	}
+
 	p.mu.Lock()
 	if p.state != Pending {
 		s, v, r := p.state, p.value, p.reason
@@ -254,6 +275,13 @@ func (p *Promise) subscribeDirectIndexed(
 	onFulfilled func(int, any) (any, error),
 	onRejected func(int, error) (any, error),
 ) {
+	// 快路径：settled（acquire 探测）为 true 时 state/value/reason 已不可变且可见，
+	// 免锁直接分发；为 false 走原写锁路径（settle 竞态由锁内检查兜底）。
+	if p.settled.Load() {
+		dispatchIndexedCallback(index, p.state, p.value, p.reason, onFulfilled, onRejected)
+		return
+	}
+
 	p.mu.Lock()
 	if p.state != Pending {
 		s, v, r := p.state, p.value, p.reason
@@ -283,10 +311,14 @@ func (p *Promise) subscribeDirectIndexed(
 //     不产生堆分配开销。
 func NewPromise(promiseHandler func(resolve func(any, error), reject func(any, error))) (result *Promise) {
 	if promiseHandler == nil {
-		return &Promise{
+		p := &Promise{
 			state:  Rejected,
 			reason: errors.New("promise handler cannot be nil"),
 		}
+		// 出生即 Rejected（不经 settle）：必须同步置位 settled，
+		// 否则 subscribeDirect* 免锁快路径永远探测不到该已结算状态。
+		p.settled.Store(true)
+		return p
 	}
 
 	p := &Promise{state: Pending}
@@ -376,7 +408,8 @@ func (p *Promise) Finally(cleanupHandler func() error) *Promise {
 	)
 }
 
-// GetValue 返回 Promise 的满足值。若 Promise 尚未完成则返回 nil（线程安全）。
+// GetValue 返回 Promise 的满足值（线程安全）。若 Promise 尚未结算则返回 nil；
+// 注意 reject(value, err) 传入的 value 会被保留，即使状态为 Rejected 也可经 GetValue 读取。
 func (p *Promise) GetValue() any {
 	_, value, _ := p.snapshot()
 	return value
@@ -432,6 +465,10 @@ func All(promises ...*Promise) *Promise {
 			return nil, nil
 		}
 		onRejected := func(_ int, reason error) (any, error) {
+			// TTAS：败者以普通 Load 快速逃逸，避免注定失败的 XCHG（CAS 仍为唯一权威裁决）。
+			if rejected.Load() {
+				return nil, nil
+			}
 			if rejected.CompareAndSwap(false, true) {
 				reject(nil, reason)
 			}
@@ -521,6 +558,10 @@ func Any(promises ...*Promise) *Promise {
 
 		// 共享回调在循环外创建（索引经参数传入，所有 promise 共享）
 		onFulfilled := func(_ int, value any) (any, error) {
+			// TTAS：败者以普通 Load 快速逃逸，避免注定失败的 XCHG（CAS 仍为唯一权威裁决）。
+			if done.Load() {
+				return nil, nil
+			}
 			if done.CompareAndSwap(false, true) {
 				resolve(value, nil)
 			}
@@ -564,12 +605,20 @@ func Race(promises ...*Promise) *Promise {
 
 		// 共享回调在循环外创建（无索引依赖，所有 promise 共享）
 		onFulfilled := func(value any) (any, error) {
+			// TTAS：败者以普通 Load 快速逃逸，避免注定失败的 XCHG（CAS 仍为唯一权威裁决）。
+			if done.Load() {
+				return nil, nil
+			}
 			if done.CompareAndSwap(false, true) {
 				resolve(value, nil)
 			}
 			return nil, nil
 		}
 		onRejected := func(reason error) (any, error) {
+			// TTAS：败者以普通 Load 快速逃逸，避免注定失败的 XCHG（CAS 仍为唯一权威裁决）。
+			if done.Load() {
+				return nil, nil
+			}
 			if done.CompareAndSwap(false, true) {
 				reject(nil, reason)
 			}

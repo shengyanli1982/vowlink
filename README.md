@@ -89,7 +89,7 @@ Inside combinators, `resolve(value, err)` is treated as a rejection: `All`/`Race
 | `Then(onFulfilled, onRejected)` | Register callbacks; returns new Promise. Either handler may be `nil` |
 | `Catch(onRejected)`             | Shorthand for `Then(nil, onRejected)`                                |
 | `Finally(cleanup)`              | Always runs cleanup handler; returning `error` rejects downstream    |
-| `GetValue() any`        | Returns resolved value, or `nil` if not yet fulfilled                |
+| `GetValue() any`                | Returns the value, or `nil` if not yet settled. Note: `reject(value, err)` retains `value` — readable via `GetValue` even when Rejected |
 | `GetReason() error`             | Returns rejection reason, or `nil` if not rejected                   |
 
 ### Combinators
@@ -102,6 +102,8 @@ Inside combinators, `resolve(value, err)` is treated as a rejection: `All`/`Race
 | `AllSettled(p1, p2, ...)` | All settle (fulfill or reject) | `[]any` mixing values and errors  |
 
 **Empty input:** `Race()` fulfills immediately with `nil` — a deliberate design choice, unlike JavaScript where an empty race stays pending forever. `Any()` rejects with an empty `*AggregateError`.
+
+**Nil inputs:** nil inputs are skipped; result indices (`values` / `AggregateError.Errors`) map to the order of non-nil inputs (compacted). This deviates from JavaScript, where a non-thenable input throws a TypeError.
 
 ## Usage Examples
 
@@ -202,6 +204,7 @@ VowLink is designed for concurrent use. Multiple goroutines can safely call `res
 - `GetValue()` and `GetReason()` are safe to call from any goroutine at any time
 - **Early-settle retention** — after `All`/`Any`/`Race` settles early, subscribers on the remaining pending inputs stay attached until each input settles (no unsubscription, matching JavaScript semantics)
 - **Settle cascade depth** — callbacks run synchronously on the settling goroutine, so settling a pending `Then` chain recurses to a depth equal to the chain length; Go's growable stacks support real-world depths (tests cover 10000 links), but consider splitting extremely deep chains or dispatching them asynchronously
+- **Panic wrapping prefixes** — a panicking handler is wrapped as `"promise executor panic: ..."` when the upstream is already settled (synchronous `Then` fast path) and as `"subscriber callback panic: ..."` when the upstream is still pending (asynchronous dispatch). Behavior is equivalent — downstream Rejects with the original panic value and is recoverable via `Catch` — only the message prefix differs
 
 ## Benchmarks
 
