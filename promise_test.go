@@ -3,8 +3,11 @@ package vowlink
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2079,5 +2082,779 @@ func TestPromise_AllConcurrentFanIn(t *testing.T) {
 			_, allowed := allowedReasons[result.reason.Error()]
 			assert.True(t, allowed, "round %d: All reason %q must be one of the input rejections", round, result.reason.Error())
 		}
+	})
+}
+
+// customCodeErr 用于 errors.As 互操作测试的自定义错误类型。
+type customCodeErr struct{ code int }
+
+func (e *customCodeErr) Error() string { return fmt.Sprintf("custom-%d", e.code) }
+
+// TestPromise_AggregateErrorUnwrapInterop 回归测试（P1-1）：
+// *AggregateError 实现 Unwrap() []error（Go 1.20+ 多错误惯例），
+// errors.Is/errors.As 必须能遍历并命中成员错误中的 sentinel 与自定义类型，
+// 覆盖直接 NewAggregateError 构造与 Any 全拒 reason 两条路径。
+func TestPromise_AggregateErrorUnwrapInterop(t *testing.T) {
+	sentinel := errors.New("unwrap-sentinel")
+	custom := &customCodeErr{code: 42}
+
+	t.Run("direct NewAggregateError construction", func(t *testing.T) {
+		aggErr := NewAggregateError(3)
+		aggErr.Errors = append(aggErr.Errors,
+			errors.New("plain"),
+			fmt.Errorf("ctx: %w", sentinel),
+			custom,
+		)
+
+		if !errors.Is(aggErr, sentinel) {
+			t.Errorf("errors.Is(aggErr, sentinel)=false，遍历未命中成员中 wrap 的 sentinel")
+		}
+		var target *customCodeErr
+		if !errors.As(aggErr, &target) {
+			t.Errorf("errors.As(aggErr, **customCodeErr)=false，遍历未命中成员中的自定义类型")
+		}
+		if target != nil && target != custom {
+			t.Errorf("errors.As 命中 %v, want 同一成员实例 %v", target, custom)
+		}
+		if errors.Is(aggErr, errors.New("non-member")) {
+			t.Errorf("errors.Is 命中非成员错误，遍历语义异常")
+		}
+	})
+
+	t.Run("Any all-rejected reason", func(t *testing.T) {
+		p1 := NewPromise(func(res, rej func(any, error)) { rej(nil, errors.New("plain")) })
+		p2 := NewPromise(func(res, rej func(any, error)) { rej(nil, fmt.Errorf("ctx: %w", sentinel)) })
+		p3 := NewPromise(func(res, rej func(any, error)) { rej(nil, custom) })
+
+		result := Any(p1, p2, p3)
+		assert.Equal(t, Rejected, result.getState())
+		reason := result.GetReason()
+		if reason == nil {
+			t.Fatal("Any 全拒应返回非 nil reason")
+		}
+
+		if !errors.Is(reason, sentinel) {
+			t.Errorf("errors.Is(Any 的 reason, sentinel)=false — 成员错误明确 wrap 了 sentinel，标准错误遍历静默假阴性")
+		}
+		var target *customCodeErr
+		if !errors.As(reason, &target) {
+			t.Errorf("errors.As(Any 的 reason, **customCodeErr)=false — 无法定位成员中的自定义错误类型")
+		}
+		if target != nil && target != custom {
+			t.Errorf("errors.As 命中 %v, want 同一成员实例 %v", target, custom)
+		}
+	})
+}
+
+// fanInSubset 让 workers 个 goroutine 在同一时刻开始结算 settlers 中 idxs 指定位置的 Promise，
+// 用于混合窗口 fan-in 场景（部分输入在组合器构建期间已并发结算，其余构建后真并发扇入）。
+func fanInSubset(settlers []func(), idxs []int, workers int) {
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(base int) {
+			defer wg.Done()
+			<-start
+			for j := base; j < len(idxs); j += workers {
+				settlers[idxs[j]]()
+			}
+		}(w)
+	}
+	close(start)
+	wg.Wait()
+}
+
+// rangeInts 返回 [from, to) 区间的整数序列。
+func rangeInts(from, to int) []int {
+	out := make([]int, 0, to-from)
+	for i := from; i < to; i++ {
+		out = append(out, i)
+	}
+	return out
+}
+
+// TestPromise_ConcurrentRetainedResolve 回归测试（D1 并发扩展）：
+// 8 个 goroutine 各创建 150 个"handler 保留 resolve 引用并同步结算"的 Promise，
+// 交错创建无关噪声 Promise（已结算 + 永久 pending）模拟池复用最坏时序，
+// 最后全量延迟调用保留的 resolve（毒化值）。
+// 任何跨 Promise 决议（废池前的 D1 缺陷模式）都会污染断言。
+func TestPromise_ConcurrentRetainedResolve(t *testing.T) {
+	const (
+		goroutines = 8
+		perG       = 150
+	)
+	type retained struct {
+		p    *Promise
+		want string
+		call func(any, error)
+	}
+	all := make([][]retained, goroutines)
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			items := make([]retained, 0, perG)
+			rng := rand.New(rand.NewSource(int64(g)))
+			for i := 0; i < perG; i++ {
+				want := fmt.Sprintf("g%d-i%d", g, i)
+				var saved func(any, error)
+				p := NewPromise(func(resolve, reject func(any, error)) {
+					saved = resolve
+					resolve(want, nil)
+				})
+				items = append(items, retained{p: p, want: want, call: saved})
+				// 交错创建无关 Promise（已结算 + 永久 pending），模拟池复用时的最坏时序
+				_ = NewPromise(func(resolve, reject func(any, error)) {
+					resolve(fmt.Sprintf("noise-%d", rng.Int()), nil)
+				})
+				if i%3 == 0 {
+					_ = NewPromise(func(resolve, reject func(any, error)) {})
+				}
+			}
+			all[g] = items
+		}(g)
+	}
+	wg.Wait()
+
+	// 延迟调用全部保留的 resolve（毒化值），任何跨 Promise 决议都会污染断言
+	for g := range all {
+		for i := range all[g] {
+			all[g][i].call("LATE-POISON", nil)
+		}
+	}
+	for g := range all {
+		for i := range all[g] {
+			it := all[g][i]
+			if got := it.p.GetValue(); got != it.want {
+				t.Fatalf("D1 回归 FAIL: g%d-i%d value=%v, want %q（跨 Promise 污染）", g, i, got, it.want)
+			}
+			if it.p.getState() != Fulfilled {
+				t.Fatalf("D1 回归 FAIL: g%d-i%d state=%v", g, i, it.p.getState())
+			}
+			if r := it.p.GetReason(); r != nil {
+				t.Fatalf("D1 回归 FAIL: g%d-i%d reason=%v", g, i, r)
+			}
+		}
+	}
+}
+
+// TestPromise_AnyAllRejectMixedWindowFanIn 回归测试（D6 扩展 + 混合窗口盲区）：
+// 一半输入在 Any() 构建期间并发结算（executor 循环中 sync-dispatch 与
+// append-subscriber 两条路径随机命中），另一半构建后 16-worker 真 fan-in，25 轮 × 128 输入。
+// 断言 AggregateError.Errors 严格按输入序（证明索引写 + 恰好一次分派 + 可见性）。
+func TestPromise_AnyAllRejectMixedWindowFanIn(t *testing.T) {
+	const (
+		n       = 128
+		workers = 16
+		rounds  = 25
+	)
+	for round := 0; round < rounds; round++ {
+		rng := rand.New(rand.NewSource(int64(round) + 1))
+		promises := make([]*Promise, n)
+		settlers := make([]func(), n)
+		for i := 0; i < n; i++ {
+			reason := fmt.Errorf("any err %d", i)
+			promises[i] = NewPromise(func(resolve, reject func(any, error)) {
+				settlers[i] = func() { reject(nil, reason) }
+			})
+		}
+
+		perm := rng.Perm(n)
+		during := perm[:n/2]
+		after := perm[n/2:]
+		durations := make([]time.Duration, len(during))
+		for k := range durations {
+			durations[k] = time.Duration(rng.Intn(300)) * time.Microsecond
+		}
+
+		var bg sync.WaitGroup
+		for k, idx := range during {
+			bg.Add(1)
+			go func(idx int, d time.Duration) {
+				defer bg.Done()
+				time.Sleep(d)
+				settlers[idx]()
+			}(idx, durations[k])
+		}
+
+		result := Any(promises...)
+		settled := make(chan struct{})
+		result.Then(nil, func(reason error) (any, error) {
+			close(settled)
+			return nil, nil
+		})
+
+		fanInSubset(settlers, after, workers)
+		bg.Wait()
+
+		select {
+		case <-settled:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d: timeout waiting for Any all-reject", round)
+		}
+
+		if st := result.getState(); st != Rejected {
+			t.Fatalf("round %d: Any state=%v, want Rejected", round, st)
+		}
+		aggErr, ok := result.GetReason().(*AggregateError)
+		if !ok {
+			t.Fatalf("round %d: reason type %T, want *AggregateError", round, result.GetReason())
+		}
+		if len(aggErr.Errors) != n {
+			t.Fatalf("round %d: len(Errors)=%d, want %d", round, len(aggErr.Errors), n)
+		}
+		for i := 0; i < n; i++ {
+			want := fmt.Sprintf("any err %d", i)
+			if aggErr.Errors[i] == nil || aggErr.Errors[i].Error() != want {
+				t.Fatalf("round %d: Errors[%d]=%v, want %q（索引序/恰好一次分派被破坏）", round, i, aggErr.Errors[i], want)
+			}
+		}
+	}
+}
+
+// TestPromise_AnyMixedFanInNeverRejects 回归测试（混合窗口盲区）：
+// 128 个输入中恰有一个 fulfiller（位置每轮随机），混合窗口并发结算，25 轮。
+// 存在 fulfiller 时 Any 绝不允许 reject（早决短路后迟到 onRejected 写 Errors 只写无读）。
+func TestPromise_AnyMixedFanInNeverRejects(t *testing.T) {
+	const (
+		n       = 128
+		workers = 16
+		rounds  = 25
+	)
+	for round := 0; round < rounds; round++ {
+		rng := rand.New(rand.NewSource(int64(round) + 1000))
+		winner := rng.Intn(n)
+		want := fmt.Sprintf("win-%d-%d", round, winner)
+		promises := make([]*Promise, n)
+		settlers := make([]func(), n)
+		for i := 0; i < n; i++ {
+			if i == winner {
+				promises[i] = NewPromise(func(resolve, reject func(any, error)) {
+					settlers[i] = func() { resolve(want, nil) }
+				})
+				continue
+			}
+			reason := fmt.Errorf("mix err %d", i)
+			promises[i] = NewPromise(func(resolve, reject func(any, error)) {
+				settlers[i] = func() { reject(nil, reason) }
+			})
+		}
+
+		perm := rng.Perm(n)
+		during := perm[:n/2]
+		after := perm[n/2:]
+		durations := make([]time.Duration, len(during))
+		for k := range durations {
+			durations[k] = time.Duration(rng.Intn(300)) * time.Microsecond
+		}
+
+		var bg sync.WaitGroup
+		for k, idx := range during {
+			bg.Add(1)
+			go func(idx int, d time.Duration) {
+				defer bg.Done()
+				time.Sleep(d)
+				settlers[idx]()
+			}(idx, durations[k])
+		}
+
+		result := Any(promises...)
+		settled := make(chan struct{})
+		var gotValue any
+		var gotReason error
+		result.Then(func(v any) (any, error) {
+			gotValue = v
+			close(settled)
+			return nil, nil
+		}, func(e error) (any, error) {
+			gotReason = e
+			close(settled)
+			return nil, nil
+		})
+
+		fanInSubset(settlers, after, workers)
+		bg.Wait()
+
+		select {
+		case <-settled:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d: timeout", round)
+		}
+
+		if st := result.getState(); st != Fulfilled {
+			t.Fatalf("round %d: Any state=%v reason=%v, want Fulfilled=%q（存在 fulfiller 时绝不允许 reject）", round, st, result.GetReason(), want)
+		}
+		if gotReason != nil {
+			t.Fatalf("round %d: unexpected reason %v", round, gotReason)
+		}
+		if gotValue != want || result.GetValue() != want {
+			t.Fatalf("round %d: value=%v/%v, want %q", round, gotValue, result.GetValue(), want)
+		}
+	}
+}
+
+// TestPromise_AllSettledMixedWindowFanIn 回归测试（C2 盲区补强）：
+// AllSettled 首个真并发混合窗口 fan-in（偶数位 resolve、奇数位 reject），25 轮 × 128 输入。
+// 结果切片必须严格逐索引等于期望值/错误（索引写 + 原子计数 + 可见性）。
+func TestPromise_AllSettledMixedWindowFanIn(t *testing.T) {
+	const (
+		n       = 128
+		workers = 16
+		rounds  = 25
+	)
+	for round := 0; round < rounds; round++ {
+		rng := rand.New(rand.NewSource(int64(round) + 2000))
+		promises := make([]*Promise, n)
+		settlers := make([]func(), n)
+		want := make([]any, n)
+		for i := 0; i < n; i++ {
+			if i%2 == 0 {
+				v := fmt.Sprintf("v-%d-%d", round, i)
+				want[i] = v
+				promises[i] = NewPromise(func(resolve, reject func(any, error)) {
+					settlers[i] = func() { resolve(v, nil) }
+				})
+				continue
+			}
+			reason := fmt.Errorf("as err %d-%d", round, i)
+			want[i] = reason
+			promises[i] = NewPromise(func(resolve, reject func(any, error)) {
+				settlers[i] = func() { reject(nil, reason) }
+			})
+		}
+
+		perm := rng.Perm(n)
+		during := perm[:n/2]
+		after := perm[n/2:]
+		durations := make([]time.Duration, len(during))
+		for k := range durations {
+			durations[k] = time.Duration(rng.Intn(300)) * time.Microsecond
+		}
+
+		var bg sync.WaitGroup
+		for k, idx := range during {
+			bg.Add(1)
+			go func(idx int, d time.Duration) {
+				defer bg.Done()
+				time.Sleep(d)
+				settlers[idx]()
+			}(idx, durations[k])
+		}
+
+		result := AllSettled(promises...)
+		settled := make(chan struct{})
+		result.Then(func(v any) (any, error) {
+			close(settled)
+			return nil, nil
+		}, nil)
+
+		fanInSubset(settlers, after, workers)
+		bg.Wait()
+
+		select {
+		case <-settled:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d: timeout", round)
+		}
+		if st := result.getState(); st != Fulfilled {
+			t.Fatalf("round %d: AllSettled state=%v, want Fulfilled", round, st)
+		}
+		values, ok := result.GetValue().([]any)
+		if !ok || len(values) != n {
+			t.Fatalf("round %d: value=%v (%T), want []any len %d", round, result.GetValue(), result.GetValue(), n)
+		}
+		for i := 0; i < n; i++ {
+			if values[i] != want[i] {
+				t.Fatalf("round %d: values[%d]=%v, want %v（索引写/可见性被破坏）", round, i, values[i], want[i])
+			}
+		}
+	}
+}
+
+// TestPromise_AllEarlyRejectLateFulfillSafety 回归测试（短路 + 迟到写安全）：
+// p0 先结算使 All 构建时同步短路拒绝，随后 127 个迟到 fulfill 全量 fan-in。
+// 迟到回调继续写 values[i] 并递减 pending，pending 永不归零（onRejected 不递减）
+// → resolve 永不被调用；All 状态/原因/值必须保持不变，20 轮 × 128 输入。
+func TestPromise_AllEarlyRejectLateFulfillSafety(t *testing.T) {
+	const (
+		n       = 128
+		workers = 16
+		rounds  = 20
+	)
+	for round := 0; round < rounds; round++ {
+		promises := make([]*Promise, n)
+		settlers := make([]func(), n)
+		firstErr := fmt.Errorf("first err %d", round)
+		promises[0] = NewPromise(func(resolve, reject func(any, error)) {
+			settlers[0] = func() { reject(nil, firstErr) }
+		})
+		for i := 1; i < n; i++ {
+			v := fmt.Sprintf("late-%d-%d", round, i)
+			promises[i] = NewPromise(func(resolve, reject func(any, error)) {
+				settlers[i] = func() { resolve(v, nil) }
+			})
+		}
+
+		// p0 先结算 → All 构建时走 sync-dispatch 立即短路拒绝
+		settlers[0]()
+		result := All(promises...)
+		if st := result.getState(); st != Rejected {
+			t.Fatalf("round %d: All 应同步短路拒绝, state=%v", round, st)
+		}
+		if r := result.GetReason(); r == nil || r.Error() != firstErr.Error() {
+			t.Fatalf("round %d: reason=%v, want %v", round, r, firstErr)
+		}
+		if v := result.GetValue(); v != nil {
+			t.Fatalf("round %d: GetValue=%v, want nil after rejection", round, v)
+		}
+
+		// 迟到 fulfill 全量 fan-in：迟到回调继续写 values[i] 并递减 pending，
+		// pending 永不归零（onRejected 不递减）→ resolve 永不被调用
+		fanInSubset(settlers, rangeInts(1, n), workers)
+
+		if st := result.getState(); st != Rejected {
+			t.Fatalf("round %d: state flipped to %v after late fulfills", round, st)
+		}
+		if r := result.GetReason(); r == nil || r.Error() != firstErr.Error() {
+			t.Fatalf("round %d: reason changed after late fulfills: %v", round, r)
+		}
+		if v := result.GetValue(); v != nil {
+			t.Fatalf("round %d: GetValue=%v after late fulfills, want nil", round, v)
+		}
+	}
+}
+
+// TestPromise_CombinatorResolveWithError 文档承诺核验（README "Resolve & Reject" 组合器段落）：
+// 组合器内 resolve(value, err) 一律按拒绝处理——All/Race 以 err 拒绝且丢弃 value、
+// AllSettled 将 err 存入结果切片对应索引、Any 将 err 记入 AggregateError；
+// Any 在另一输入 fulfill 时仍必须 Fulfilled。
+func TestPromise_CombinatorResolveWithError(t *testing.T) {
+	boom := errors.New("boom-payload-err")
+
+	t.Run("All rejects with err and discards value", func(t *testing.T) {
+		p := NewPromise(func(res, rej func(any, error)) { res("payload", boom) })
+		r := All(p)
+		if r.getState() != Rejected {
+			t.Fatalf("state=%v, want Rejected", r.getState())
+		}
+		if r.GetReason() != boom {
+			t.Fatalf("reason=%v, want boom (identity)", r.GetReason())
+		}
+		if r.GetValue() != nil {
+			t.Fatalf("value=%v, want nil (payload discarded)", r.GetValue())
+		}
+	})
+
+	t.Run("Race rejects with err", func(t *testing.T) {
+		p := NewPromise(func(res, rej func(any, error)) { res("payload", boom) })
+		r := Race(p)
+		if r.getState() != Rejected || r.GetReason() != boom {
+			t.Fatalf("state=%v reason=%v, want Rejected/boom", r.getState(), r.GetReason())
+		}
+	})
+
+	t.Run("AllSettled stores err at index", func(t *testing.T) {
+		p1 := NewPromise(func(res, rej func(any, error)) { res("payload", boom) })
+		p2 := NewPromise(func(res, rej func(any, error)) { res("ok", nil) })
+		r := AllSettled(p1, p2)
+		if r.getState() != Fulfilled {
+			t.Fatalf("state=%v, want Fulfilled", r.getState())
+		}
+		values, ok := r.GetValue().([]any)
+		if !ok || len(values) != 2 {
+			t.Fatalf("value=%v", r.GetValue())
+		}
+		if values[0] != boom {
+			t.Fatalf("values[0]=%v, want boom error stored", values[0])
+		}
+		if values[1] != "ok" {
+			t.Fatalf("values[1]=%v, want ok", values[1])
+		}
+	})
+
+	t.Run("Any records err in AggregateError", func(t *testing.T) {
+		p := NewPromise(func(res, rej func(any, error)) { res("payload", boom) })
+		r := Any(p)
+		if r.getState() != Rejected {
+			t.Fatalf("state=%v, want Rejected", r.getState())
+		}
+		agg, ok := r.GetReason().(*AggregateError)
+		if !ok || len(agg.Errors) != 1 || agg.Errors[0] != boom {
+			t.Fatalf("reason=%v, want AggregateError[boom]", r.GetReason())
+		}
+	})
+
+	t.Run("Any still fulfills when another input fulfills", func(t *testing.T) {
+		p1 := NewPromise(func(res, rej func(any, error)) { res("payload", boom) })
+		p2 := NewPromise(func(res, rej func(any, error)) { res("win", nil) })
+		r := Any(p1, p2)
+		if r.getState() != Fulfilled || r.GetValue() != "win" {
+			t.Fatalf("state=%v value=%v, want Fulfilled/win", r.getState(), r.GetValue())
+		}
+	})
+}
+
+// TestPromise_PanicPathPrefixes 钉住 panic 包装双前缀现状（P2-3，已文档化于 README Concurrency 节）：
+// 上游已结算时 Then 走同步快路径，handler panic 由 executor recover 包装为
+// "promise executor panic: ..."；上游 pending 时走异步 subscriber 分派，
+// 由 dispatchSubscriber recover 包装为 "subscriber callback panic: ..."。
+// 两路径行为等价：下游均 Rejected、均含原始 panic 值、均可 Catch 恢复。
+func TestPromise_PanicPathPrefixes(t *testing.T) {
+	// 同步快路径：上游已结算 → handler panic 由 NewPromise executor recover 兜底
+	src1 := NewPromise(func(res, _ func(any, error)) { res("v", nil) })
+	d1 := src1.Then(func(any) (any, error) { panic("same-boom") }, nil)
+
+	// 异步 subscriber 路径：上游 pending → handler panic 由 dispatchSubscriber recover 兜底
+	var asyncRes func(any, error)
+	src2 := NewPromise(func(res, _ func(any, error)) { asyncRes = res })
+	d2 := src2.Then(func(any) (any, error) { panic("same-boom") }, nil)
+	asyncRes("v", nil)
+
+	for i, d := range []*Promise{d1, d2} {
+		if d.getState() != Rejected {
+			t.Fatalf("case %d: downstream state=%v, want Rejected", i, d.getState())
+		}
+		r := d.GetReason()
+		if r == nil || !strings.Contains(r.Error(), "same-boom") {
+			t.Fatalf("case %d: reason=%v, want contains same-boom", i, r)
+		}
+	}
+	if !strings.Contains(d1.GetReason().Error(), "promise executor panic") {
+		t.Errorf("sync 路径前缀与既往审计记录不符: %q", d1.GetReason())
+	}
+	if !strings.Contains(d2.GetReason().Error(), "subscriber callback panic") {
+		t.Errorf("async 路径前缀与既往审计记录不符: %q", d2.GetReason())
+	}
+	// 两路径下游均可被 Catch 恢复（行为等价性）
+	for i, d := range []*Promise{d1, d2} {
+		r := d.Catch(func(e error) (any, error) { return "recovered", nil })
+		if r.GetValue() != "recovered" {
+			t.Fatalf("case %d: Catch recovery failed, value=%v", i, r.GetValue())
+		}
+	}
+}
+
+// TestPromise_ConcurrentReadersDuringFanIn 回归测试（并发读安全）：
+// All fan-in 结算期间 4 个 reader goroutine 持续并发读取结果 Promise 与全部输入
+// 的 GetValue/GetReason/getState，15 轮 × 64 输入（配合 -race 验证读路径无数据竞争）。
+// 存在 reject 输入（i%4==0）→ All 最终必须 Rejected。
+func TestPromise_ConcurrentReadersDuringFanIn(t *testing.T) {
+	const (
+		n       = 64
+		workers = 8
+		rounds  = 15
+		readers = 4
+	)
+	for round := 0; round < rounds; round++ {
+		promises := make([]*Promise, n)
+		settlers := make([]func(), n)
+		for i := 0; i < n; i++ {
+			v := i
+			promises[i] = NewPromise(func(res, rej func(any, error)) {
+				settlers[i] = func() {
+					if v%4 == 0 {
+						rej(nil, fmt.Errorf("e%d", v))
+					} else {
+						res(v, nil)
+					}
+				}
+			})
+		}
+		result := All(promises...)
+		stop := make(chan struct{})
+		var rwg sync.WaitGroup
+		for r := 0; r < readers; r++ {
+			rwg.Add(1)
+			go func() {
+				defer rwg.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+						_ = result.GetValue()
+						_ = result.GetReason()
+						_ = result.getState()
+						for _, p := range promises {
+							_ = p.GetValue()
+							_ = p.getState()
+						}
+					}
+				}
+			}()
+		}
+		settleFanIn(settlers, workers)
+		close(stop)
+		rwg.Wait()
+		// i%4==0 存在 → All 必须 Rejected
+		if result.getState() != Rejected {
+			t.Fatalf("round %d: state=%v, want Rejected", round, result.getState())
+		}
+	}
+}
+
+// TestPromise_DuplicatePromiseInputs 回归测试：同一 Promise 实例重复作为组合器输入时，
+// 每次输入独立订阅、独立占位结果索引（All/AllSettled 值按位重复、Any Errors 按位重复、
+// Race 正常选主），不得因指针相同而丢失或串位。
+func TestPromise_DuplicatePromiseInputs(t *testing.T) {
+	t.Run("All duplicate fulfilled", func(t *testing.T) {
+		p := NewPromise(func(res, _ func(any, error)) { res("dup", nil) })
+		r := All(p, p, p)
+		vals, ok := r.GetValue().([]any)
+		if !ok || len(vals) != 3 {
+			t.Fatalf("value=%v", r.GetValue())
+		}
+		for i := range vals {
+			if vals[i] != "dup" {
+				t.Fatalf("vals[%d]=%v", i, vals[i])
+			}
+		}
+	})
+	t.Run("Any duplicate rejected", func(t *testing.T) {
+		boom := errors.New("dup-boom")
+		p := NewPromise(func(_, rej func(any, error)) { rej(nil, boom) })
+		r := Any(p, p)
+		agg, ok := r.GetReason().(*AggregateError)
+		if !ok || len(agg.Errors) != 2 {
+			t.Fatalf("reason=%v", r.GetReason())
+		}
+		if agg.Errors[0] != boom || agg.Errors[1] != boom {
+			t.Fatalf("errors=%v", agg.Errors)
+		}
+	})
+	t.Run("Race duplicate", func(t *testing.T) {
+		p := NewPromise(func(res, _ func(any, error)) { res("rd", nil) })
+		r := Race(p, p)
+		if r.getState() != Fulfilled || r.GetValue() != "rd" {
+			t.Fatalf("state=%v value=%v", r.getState(), r.GetValue())
+		}
+	})
+	t.Run("AllSettled duplicate resolve-with-error", func(t *testing.T) {
+		boom := errors.New("dup2")
+		p := NewPromise(func(res, _ func(any, error)) { res("x", boom) })
+		r := AllSettled(p, p)
+		vals, ok := r.GetValue().([]any)
+		if !ok || len(vals) != 2 {
+			t.Fatalf("value=%v", r.GetValue())
+		}
+		if vals[0] != boom || vals[1] != boom {
+			t.Fatalf("vals=%v", vals)
+		}
+	})
+}
+
+// TestPromise_ThenSettleWindowStress 回归测试（Then 注册 × settle 并发窗口）：
+// 64 个 goroutine 并发注册 Then 的同时结算源 Promise，压 snapshot→Lock 双检窗口，
+// 30 轮。fired 计数必须精确等于注册数（恰好一次分派，无丢失、无双重），
+// 所有下游最终必须 Fulfilled 且值正确。
+func TestPromise_ThenSettleWindowStress(t *testing.T) {
+	const (
+		registrars = 64
+		rounds     = 30
+	)
+	for round := 0; round < rounds; round++ {
+		var asyncRes func(any, error)
+		p := NewPromise(func(res, _ func(any, error)) { asyncRes = res })
+		want := fmt.Sprintf("r%d", round)
+		done := make(chan struct{}, registrars)
+		var fired atomic.Int32
+		downstreams := make([]*Promise, registrars)
+		var wg sync.WaitGroup
+		for k := 0; k < registrars; k++ {
+			wg.Add(1)
+			go func(k int) {
+				defer wg.Done()
+				downstreams[k] = p.Then(func(v any) (any, error) {
+					fired.Add(1)
+					done <- struct{}{}
+					return v, nil
+				}, nil)
+			}(k)
+		}
+		// 与注册并发地结算，压 Then 的 snapshot→Lock 双检窗口
+		asyncRes(want, nil)
+		for i := 0; i < registrars; i++ {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("round %d: callback %d never fired（分派丢失）", round, i)
+			}
+		}
+		wg.Wait()
+		if got := fired.Load(); got != registrars {
+			t.Fatalf("round %d: fired=%d, want %d（恰好一次分派被破坏）", round, got, registrars)
+		}
+		// 所有下游最终必须 Fulfilled 且值正确
+		for k, d := range downstreams {
+			deadline := time.Now().Add(2 * time.Second)
+			for d.getState() == Pending && time.Now().Before(deadline) {
+				runtime.Gosched()
+			}
+			if d.getState() != Fulfilled || d.GetValue() != want {
+				t.Fatalf("round %d: downstream[%d] state=%v value=%v, want Fulfilled/%q", round, k, d.getState(), d.GetValue(), want)
+			}
+		}
+	}
+}
+
+// TestPromise_GetValueOnRejectedReturnsPayload 钉住实际行为（P2-1 文档修正配套）：
+// 未结算时 GetValue 返回 nil；reject(value, err) 传入的 value 会被保留，
+// 即使状态为 Rejected 也可经 GetValue 读取（与 GetValue 文档注释及 README 一致）。
+func TestPromise_GetValueOnRejectedReturnsPayload(t *testing.T) {
+	pending := NewPromise(func(res, rej func(any, error)) {})
+	assert.Nil(t, pending.GetValue(), "未结算 Promise 的 GetValue 应为 nil")
+
+	p := NewPromise(func(res, rej func(any, error)) { rej("payload-on-reject", errors.New("boom")) })
+	assert.Equal(t, Rejected, p.getState())
+	assert.Equal(t, "payload-on-reject", p.GetValue(), "reject 传入的 value 应被保留并可经 GetValue 读取")
+	assert.Equal(t, "boom", p.GetReason().Error())
+
+	pNil := NewPromise(func(res, rej func(any, error)) { rej(nil, errors.New("boom")) })
+	assert.Nil(t, pNil.GetValue(), "reject(nil, err) 时 GetValue 应为 nil")
+}
+
+// TestPromise_CombinatorNilHandlerInputs 覆盖组合器接收 NewPromise(nil) 输入的场景：
+// 该类 Promise 出生即 Rejected、不经 settle()，其 settled 探测标志在构造期同步置位
+// （Batch P1' 免锁快路径的易漏点）。本测试钉住构造期 Store 不被遗漏，
+// 且 subscribeDirect/subscribeDirectIndexed 的免锁快路径对四种组合器均正确分发。
+func TestPromise_CombinatorNilHandlerInputs(t *testing.T) {
+	const nilHandlerReason = "promise handler cannot be nil"
+
+	// 直接钉住构造期置位：缺失时行为断言会被锁路径兜底掩盖（性能静默退化）。
+	assert.True(t, NewPromise(nil).settled.Load(), "出生即 Rejected 的 Promise 必须构造期置位 settled")
+
+	t.Run("All should reject with nil-handler reason", func(t *testing.T) {
+		ok := NewPromise(func(res, rej func(any, error)) { res(1, nil) })
+		p := All(ok, NewPromise(nil))
+		assert.Equal(t, Rejected, p.getState())
+		assert.Equal(t, nilHandlerReason, p.GetReason().Error())
+	})
+
+	t.Run("Race should reject with nil-handler reason", func(t *testing.T) {
+		pending := NewPromise(func(res, rej func(any, error)) {})
+		p := Race(pending, NewPromise(nil))
+		assert.Equal(t, Rejected, p.getState())
+		assert.Equal(t, nilHandlerReason, p.GetReason().Error())
+	})
+
+	t.Run("AllSettled should record nil-handler error at index", func(t *testing.T) {
+		ok := NewPromise(func(res, rej func(any, error)) { res("v", nil) })
+		p := AllSettled(NewPromise(nil), ok)
+		assert.Equal(t, Fulfilled, p.getState())
+		values := p.GetValue().([]any)
+		assert.Equal(t, nilHandlerReason, values[0].(error).Error())
+		assert.Equal(t, "v", values[1])
+	})
+
+	t.Run("Any all nil-handler inputs aggregate reasons", func(t *testing.T) {
+		p := Any(NewPromise(nil), NewPromise(nil))
+		assert.Equal(t, Rejected, p.getState())
+		var agg *AggregateError
+		assert.True(t, errors.As(p.GetReason(), &agg), "拒绝原因应为 *AggregateError")
+		assert.Len(t, agg.Errors, 2)
+		assert.Equal(t, nilHandlerReason, agg.Errors[0].Error())
+		assert.Equal(t, nilHandlerReason, agg.Errors[1].Error())
 	})
 }
